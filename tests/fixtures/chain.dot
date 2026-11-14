@@ -1,0 +1,9 @@
+digraph chain {
+  start [shape=point];
+  start -> a;
+  a [label="First"];
+  b [label="Second"];
+  c [label="Third", shape=doublecircle];
+  a -> b;
+  b -> c;
+}

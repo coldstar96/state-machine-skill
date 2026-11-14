@@ -1,0 +1,8 @@
+digraph watch {
+  start [shape=point];
+  start -> poll;
+  poll [label="Check for new work"];
+  act  [label="Handle it"];
+  poll -> act;
+  act -> poll;
+}

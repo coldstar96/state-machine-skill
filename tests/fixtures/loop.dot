@@ -1,0 +1,16 @@
+digraph fix_bug {
+  __start__ [shape=point];
+  __start__ -> reproduce;
+
+  reproduce [label="Reproduce the bug with a failing test"];
+  diagnose  [label="Find the root cause; no fix yet"];
+  fix       [label="Apply the minimal fix"];
+  verify    [label="Run the full suite"];
+  done      [label="Report the result", shape=doublecircle];
+
+  reproduce -> diagnose [label="test fails for the right reason"];
+  diagnose  -> fix;
+  fix       -> verify;
+  verify    -> done [label="suite green", check="npm test"];
+  verify    -> fix  [label="suite red"];
+}
