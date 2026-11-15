@@ -131,6 +131,16 @@ Use it when items are found at run time and each gets its own machine, run by a 
 - Read the results with `sm get --run <child dir> <name>`.
 - Wait for the subagents to finish, then `sm go`. If the check fails, read the runs it lists and any child's `BLOCKED.md`, and follow "When it does not fit: stop".
 
+## Sub-machine
+
+Use it when one state holds a procedure big enough for its own machine. You drive the child yourself while the parent waits in that state.
+
+- The child is a stored machine, or one you draft in the parent run directory; present it with the parent either way. Its `{name}` placeholders are the values to pass with `--set`.
+- Draft the state's exit with `check="python3 <this skill's directory>/sm.py finished \"$sub\""`.
+- On entering the state: `sm set sub "$(sm new <slug> --from <child machine>)"`, then `SM_RUN="$(sm get sub)" sm init "$(sm get sub)" --cwd <directory> --set <name>=<value>`. The `sub` var keeps the child's directory through a context reset.
+- Prefix every child call with `SM_RUN=<child dir>`, starting with `sm now`; never `sm use` it. Unprefixed calls act on the parent, whose `vars:` line shows `sub`.
+- At the child's final state, read its results with `sm get --run <child dir> <name>`, `sm set` the ones the parent needs, then `sm go` in the parent.
+
 ## Finish
 
 At a final state, report the result and the path taken (`sm log`). "Where are we?" is answered with `sm show`, or `sm png`.
