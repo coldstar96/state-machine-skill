@@ -29,14 +29,17 @@ def _read(run: Run) -> str:
         raise ValueError(f"no machine.dot in {run.dir}")
 
 
-def _load(run: Run) -> tuple[Graph | None, list[str], list[str]]:
-    text = _read(run)
+def _parse_lint(text: str) -> tuple[Graph | None, list[str], list[str]]:
     try:
         g = parse(text)
     except ValueError as e:
         return None, [str(e)], []
     errors, notes = lint(g)
     return g, errors, notes
+
+
+def _load(run: Run) -> tuple[Graph | None, list[str], list[str]]:
+    return _parse_lint(_read(run))
 
 
 def _sync(run: Run, state: dict) -> tuple[Graph | None, list[str], list[str], bool]:
@@ -284,7 +287,20 @@ def _cmd_new(args) -> int:
     d = _base(load_config()) / f"{datetime.now():%Y-%m-%d}-{args.slug}"
     if (d / "machine.dot").exists():
         raise ValueError(f"{d} already holds a machine.dot")
+    text = None
+    if args.src:
+        src = Path(args.src).expanduser()
+        src = src / "machine.dot" if src.is_dir() else src
+        try:
+            text = src.read_text()
+        except FileNotFoundError:
+            raise ValueError(f"no machine.dot at {args.src}")
+        errors = _parse_lint(text)[1]
+        if errors:
+            raise _invalid(errors)
     d.mkdir(parents=True, exist_ok=True)
+    if text is not None:
+        (d / "machine.dot").write_text(text)
     print(d)
     return 0
 
@@ -329,7 +345,9 @@ def _parser() -> argparse.ArgumentParser:
     sp = add("jump", _cmd_jump, "move to any state, bypassing edges")
     sp.add_argument("state")
     sp.add_argument("-m", "--reason", required=True)
-    add("new", _cmd_new, "create a dated directory for a new machine").add_argument("slug")
+    sp = add("new", _cmd_new, "create a dated directory for a new machine")
+    sp.add_argument("slug")
+    sp.add_argument("--from", dest="src", default=None)
     sp = add("config", _cmd_config, "show or set user settings")
     sp.add_argument("key", nargs="?")
     sp.add_argument("value", nargs="?")

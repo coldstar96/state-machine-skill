@@ -86,7 +86,7 @@ A restricted subset of DOT:
 
 | Command | What it does |
 |---|---|
-| `sm new <slug>` | Create a dated directory for a new machine and print its path |
+| `sm new <slug> [--from <path>]` | Create a dated directory for a new machine and print its path; `--from` copies a stored machine's `machine.dot` into it |
 | `sm validate [dir]` | Parse and check the machine |
 | `sm show [dir]` | Print the outline, with the current state marked |
 | `sm png [dir]` | Draw the machine with Graphviz |

@@ -36,6 +36,8 @@ digraph fix_bug {
 - Every condition a command can decide has `check="<command>"` (exit 0 allows the move). Only conditions that need judgment go without one.
 - Every deliverable the user named has a state.
 
+**Given a machine.** When the user names a stored machine (a directory or a `.dot` file), run `sm new <slug> --from <path>` instead of drafting, then go to §2. Never `init` or edit the stored machine: edits during the run go to the copy, and copying them back is the user's call.
+
 ## 2. Present
 
 Run `sm validate <dir>`, then `sm show <dir>`. Present the machine as one block, every line filled in:

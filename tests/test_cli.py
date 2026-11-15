@@ -44,6 +44,30 @@ class CliTests(unittest.TestCase):
         p = self.tmp / "m" / "machine.dot"
         p.write_text(fn(p.read_text()))
 
+    def test_new_from_copies_only_the_machine(self):
+        src = self.copy_fixture("chain.dot")
+        self.assertEqual(self.sm("init", src)[0], 0)
+        before = (src / "machine.dot").read_bytes()
+        code, out = self.sm("new", "reuse", "--from", src)
+        self.assertEqual(code, 0, out)
+        made = Path(out.strip())
+        self.assertEqual(sorted(p.name for p in made.iterdir()), ["machine.dot"])
+        self.assertEqual((made / "machine.dot").read_bytes(), before)
+        self.assertEqual((src / "machine.dot").read_bytes(), before)
+        code, out = self.sm("new", "reuse2", "--from", FIXTURES / "loop.dot")
+        self.assertEqual(code, 0, out)
+        self.assertEqual((Path(out.strip()) / "machine.dot").read_text(), (FIXTURES / "loop.dot").read_text())
+
+    def test_new_from_refuses_bad_sources_without_creating_a_dir(self):
+        today = datetime.now().strftime("%Y-%m-%d")
+        bad = self.tmp / "bad.dot"
+        bad.write_text("digraph x { a -> }")
+        for src, why in ((bad, "invalid"), (self.tmp / "missing", "no machine.dot"), (self.tmp, "no machine.dot")):
+            code, out = self.sm("new", "nope", "--from", src)
+            self.assertEqual(code, 1)
+            self.assertIn(why, out)
+        self.assertFalse((self.tmp / f"{today}-nope").exists())
+
     def test_walk_chain_to_the_end(self):
         self.start("chain.dot")
         self.assertIn("[chain] a · step 0 · visit 1 — ", self.sm("now")[1])
