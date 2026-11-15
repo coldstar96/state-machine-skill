@@ -1,6 +1,6 @@
 ---
 name: state-machine
-description: Use when the user wants a task run as a state machine or workflow graph (Graphviz DOT) that the agent follows step by step, asks to draw, show or edit the machine for a task, asks "where are we" in one, or a machine.dot run is already active in this session.
+description: Use when the user wants a task run as a state machine, workflow or step-by-step graph (Graphviz DOT) that the agent follows, including one that loops over a queue of items, fans items out to parallel subagents and waits for all of them, or keeps values between steps across context resets; when the user hands over a stored machine.dot to reuse; asks to draw, show or edit the machine; asks "where are we" in one; or a machine.dot run is already active in this session.
 ---
 
 # State machine
