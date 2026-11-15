@@ -15,11 +15,36 @@ from smlib.render import highlighted, outline, spaced
 from smlib.store import CONFIG_KEYS, Run, changes, home, load_config, save_config
 
 
+NAME = r"[a-z][a-z0-9_]*"
 RULE = "rule: only this state's work; if it does not fit, stop and report (BLOCKED.md), no jump, no graph edits"
 
 
 def _now() -> str:
     return datetime.now().isoformat(timespec="seconds")
+
+
+def _var_name(name: str) -> str:
+    if not re.fullmatch(NAME, name) or name.endswith(("_len", "_proxy")) or name.startswith("npm_config_"):
+        raise ValueError(f"bad variable name '{name}': lowercase letters, digits, _; "
+                         "not ending in _len or _proxy, not npm_config_*")
+    return name
+
+
+def _vars(state) -> dict:
+    v = state.get("vars") if isinstance(state, dict) else None
+    return v if isinstance(v, dict) else {}
+
+
+def _show(v, n: int = 60) -> str:
+    if isinstance(v, list):
+        return f"[{len(v)} items]"
+    s = re.sub(r"[\x00-\x1f\x7f]+", " ", str(v))
+    return s if len(s) <= n else s[:n - 3] + "..."
+
+
+def _save_var(run: Run, state: dict, **entry) -> None:
+    run.save(state)
+    run.log(kind="var", step=state["steps"], **entry)
 
 
 def _read(run: Run) -> str:
@@ -95,9 +120,36 @@ def _current(g: Graph, state: dict) -> str:
     return cur
 
 
+def _fill(text: str, vars: dict) -> str:
+    def one(m):
+        v = vars.get(m.group(1))
+        if v is None:
+            return m.group(0)
+        if isinstance(v, list):
+            return ", ".join(_show(i) for i in v[:3]) + (f" (+{len(v) - 3} more)" if len(v) > 3 else "")
+        return _show(v)
+    return re.sub(r"\{(" + NAME + r")\}", one, text)
+
+
+def _var_env(state: dict) -> dict[str, str]:
+    env = {}
+    for k, v in _vars(state).items():
+        if isinstance(v, list):
+            env[k] = "\n".join(v)
+            env[f"{k}_len"] = str(len(v))
+        else:
+            env[k] = v
+    return env
+
+
 def _where(g: Graph, state: dict) -> str:
     cur = _current(g, state)
-    head = f"[{g.name}] {cur} · step {state['steps']} · visit {state['visits'].get(cur, 0)} — {g.label(cur)}"
+    vs = _vars(state)
+    head = (f"[{g.name}] {cur} · step {state['steps']} · visit {state['visits'].get(cur, 0)}"
+            f" — {_fill(g.label(cur), vs)}")
+    if vs:
+        shown = " · ".join(f"{k}={_show(v)}" for k, v in list(vs.items())[:8])
+        head += "\nvars: " + shown + (f" · +{len(vs) - 8} more" if len(vs) > 8 else "")
     if g.is_final(cur):
         return head + "\nfinal state — machine finished"
     return head + "\nexits: " + " | ".join(_exit(e) for e in g.exits(cur)) + "\n" + RULE
@@ -123,11 +175,11 @@ def _unfinished(prev: str | None) -> None:
         pass
 
 
-def _check(cmd: str, cwd: str) -> None:
+def _check(cmd: str, cwd: str, env: dict[str, str]) -> None:
     if not os.path.isdir(cwd):
         raise ValueError(f"check directory is gone: {cwd}")
-    r = subprocess.run(["sh", "-c", cmd], cwd=cwd, stdin=subprocess.DEVNULL, stdout=subprocess.PIPE,
-                       stderr=subprocess.STDOUT, encoding="utf-8", errors="replace")
+    r = subprocess.run(["sh", "-c", cmd], cwd=cwd, env={**os.environ, **env}, stdin=subprocess.DEVNULL,
+                       stdout=subprocess.PIPE, stderr=subprocess.STDOUT, encoding="utf-8", errors="replace")
     if r.returncode:
         tail = r.stdout.splitlines()[-15:]
         raise ValueError("\n".join([f"check failed (exit {r.returncode}): {cmd}", *tail]))
@@ -138,7 +190,7 @@ def _notify(run: Run, g: Graph, state: dict) -> None:
         cmd = load_config().get("on_move")
         if cmd:
             env = {**os.environ, "SM_STATE": state["current"], "SM_MACHINE": g.name, "SM_DIR": str(run.dir),
-                   "SM_STEP": str(state["steps"])}
+                   "SM_STEP": str(state["steps"]), **_var_env(state)}
             subprocess.run(cmd, shell=True, cwd=run.dir, env=env, stdin=subprocess.DEVNULL,
                            stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL, timeout=10)
     except Exception:
@@ -146,14 +198,18 @@ def _notify(run: Run, g: Graph, state: dict) -> None:
 
 
 def _move(run: Run, state: dict, g: Graph, to: str, reason: str | None, checked: bool, jump: bool) -> int:
-    state["steps"] += 1
-    state["visits"][to] = state["visits"].get(to, 0) + 1
-    run.log(kind="move", step=state["steps"], to=to, reason=reason, check="ok" if checked else None,
-            jump=jump, **{"from": state["current"]})
-    state["current"] = to
-    run.save(state)
-    print(_where(g, state))
-    _notify(run, g, state)
+    with run.lock():
+        fresh = run.state()
+        if fresh["current"] != state["current"]:
+            raise ValueError("the run moved meanwhile; run sm now")
+        fresh["steps"] += 1
+        fresh["visits"][to] = fresh["visits"].get(to, 0) + 1
+        run.log(kind="move", step=fresh["steps"], to=to, reason=reason, check="ok" if checked else None,
+                jump=jump, **{"from": fresh["current"]})
+        fresh["current"] = to
+        run.save(fresh)
+    print(_where(g, fresh))
+    _notify(run, g, fresh)
     return 0
 
 
@@ -198,6 +254,12 @@ def _cmd_png(args) -> int:
 
 
 def _cmd_init(args) -> int:
+    pairs = []
+    for s in args.set:
+        name, eq, value = s.partition("=")
+        if not eq:
+            raise ValueError("--set needs name=value")
+        pairs.append((_var_name(name), value))
     run = Run(args.dir)
     if run.state_file.exists():
         raise ValueError(f"already started: sm use {run.dir}")
@@ -207,8 +269,12 @@ def _cmd_init(args) -> int:
     first = g.initial()
     state = {"current": first, "cwd": os.path.abspath(args.cwd or os.getcwd()), "started": _now(),
              "steps": 0, "visits": {first: 1}}
+    if pairs:
+        state["vars"] = dict(pairs)
     prev = run.point()
     run.save(state)
+    for name, value in pairs:
+        run.log(kind="var", step=0, op="set", name=name, value=_show(value, 200))
     run.applied.write_text(_read(run))
     _unfinished(prev)
     print(_where(g, state))
@@ -249,7 +315,7 @@ def _cmd_go(args) -> int:
     if edge is None:
         raise ValueError(f"no edge {cur} -> {target}; exits: {names}")
     if edge["check"]:
-        _check(edge["check"], state["cwd"])
+        _check(edge["check"], state["cwd"], _var_env(state))
     elif len(exits) > 1 and not args.reason:
         raise ValueError('reason required: -m "<why this exit>"')
     return _move(run, state, g, target, args.reason, bool(edge["check"]), False)
@@ -336,16 +402,77 @@ def _cmd_finished(args) -> int:
 
 def _cmd_log(args) -> int:
     run, _, _, _ = _open(strict=False)
-    for e in run.tail(args.n):
+    entries = [e for e in run.tail(sys.maxsize) if args.vars or e["kind"] != "var"]
+    for e in entries[-args.n:] if args.n > 0 else []:
         hm = e["ts"][11:16]
         if e["kind"] == "edit":
             print(f"-- {hm} edit at step {e['step']}: {e['summary']}")
+            continue
+        if e["kind"] == "var":
+            if e["op"] == "set":
+                print(f"-- {hm} set {e['name']} = {_show(e['value'])}")
+            elif e["op"] == "push":
+                print(f"-- {hm} push {e['name']} + {', '.join(_show(i) for i in e['items'])}")
+            else:
+                print(f"-- {hm} pop {e['name']} -> {e['into']} = {_show(e['value'])}")
             continue
         line = f"{e['step']} {hm} {e['from']} -> {e['to']}"
         line += f" ({e['reason']})" if e["reason"] else ""
         line += " [check ok]" if e["check"] else ""
         line += " JUMP" if e["jump"] else ""
         print(line)
+    return 0
+
+
+def _cmd_set(args) -> int:
+    name = _var_name(args.name)
+    run = Run.active()
+    with run.lock():
+        state = run.state()
+        state.setdefault("vars", {})[name] = args.value
+        _save_var(run, state, op="set", name=name, value=_show(args.value, 200))
+    return 0
+
+
+def _cmd_push(args) -> int:
+    name = _var_name(args.name)
+    run = Run.active()
+    with run.lock():
+        state = run.state()
+        items = state.setdefault("vars", {}).get(name, [])
+        if not isinstance(items, list):
+            raise ValueError(f"{name} is not a list")
+        state["vars"][name] = items + args.values
+        _save_var(run, state, op="push", name=name, items=[_show(v, 200) for v in args.values])
+    return 0
+
+
+def _cmd_pop(args) -> int:
+    name, into = _var_name(args.name), _var_name(args.into)
+    run = Run.active()
+    with run.lock():
+        state = run.state()
+        values = state.setdefault("vars", {})
+        items = values.get(name, [])
+        if not isinstance(items, list):
+            raise ValueError(f"{name} is not a list")
+        if into == name or isinstance(values.get(into), list):
+            raise ValueError(f"cannot pop into {into}: it is a list")
+        if not items:
+            raise ValueError(f"{name} is empty")
+        value = items.pop(-1 if args.last else 0)
+        values[into] = value
+        _save_var(run, state, op="pop", name=name, value=_show(value, 200), into=into)
+    return 0
+
+
+def _cmd_get(args) -> int:
+    run = Run(args.run) if args.run else Run.active()
+    values = _vars(run.state())
+    if args.name not in values:
+        raise ValueError(f"{args.name} is not set")
+    v = values[args.name]
+    print("\n".join(v) if isinstance(v, list) else v)
     return 0
 
 
@@ -366,6 +493,7 @@ def _parser() -> argparse.ArgumentParser:
     sp = add("init", _cmd_init, "start a machine")
     sp.add_argument("dir")
     sp.add_argument("--cwd")
+    sp.add_argument("--set", action="append", default=[], metavar="NAME=VALUE")
     add("use", _cmd_use, "point this session at a machine").add_argument("dir")
     add("now", _cmd_now, "where we are and the exits")
     sp = add("go", _cmd_go, "move along an edge")
@@ -381,7 +509,22 @@ def _parser() -> argparse.ArgumentParser:
     sp = add("config", _cmd_config, "show or set user settings")
     sp.add_argument("key", nargs="?")
     sp.add_argument("value", nargs="?")
-    add("log", _cmd_log, "recent transitions").add_argument("-n", type=int, default=10)
+    sp = add("set", _cmd_set, "set a variable")
+    sp.add_argument("name")
+    sp.add_argument("value")
+    sp = add("push", _cmd_push, "append values to a list variable")
+    sp.add_argument("name")
+    sp.add_argument("values", nargs="+")
+    sp = add("pop", _cmd_pop, "remove a list's first (or --last) value into another variable")
+    sp.add_argument("name")
+    sp.add_argument("into")
+    sp.add_argument("--last", action="store_true")
+    sp = add("get", _cmd_get, "print a variable")
+    sp.add_argument("--run")
+    sp.add_argument("name")
+    sp = add("log", _cmd_log, "recent transitions")
+    sp.add_argument("-n", type=int, default=10)
+    sp.add_argument("--vars", action="store_true", help="include variable changes")
     return p
 
 

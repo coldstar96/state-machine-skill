@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import json
 import os
 import re
 import shutil
@@ -67,10 +68,105 @@ class CliTests(unittest.TestCase):
         other = self.tmp / "other"
         other.mkdir()
         (other / "machine.dot").write_text((FIXTURES / "chain.dot").read_text())
-        code, out = self.sm("init", other, env=env)
+        code, out = self.sm("init", other, "--set", "a=b", env=env)
         self.assertEqual(code, 1)
         self.assertIn("SM_RUN is", out)
         self.assertFalse((other / "state.json").exists())
+        self.assertFalse((other / "history.jsonl").exists())
+
+    def test_vars_set_push_pop_get(self):
+        self.start("chain.dot")
+        self.assertEqual(self.sm("set", "item", "x")[0], 0)
+        self.assertEqual(self.sm("get", "item"), (0, "x\n"))
+        self.assertEqual(self.sm("set", "item", "--", "-x.py")[0], 0)
+        self.assertEqual(self.sm("get", "item"), (0, "-x.py\n"))
+        self.assertEqual(self.sm("push", "queue", "a", "b", "c")[0], 0)
+        self.assertEqual(self.sm("push", "queue", "d")[0], 0)
+        self.assertEqual(self.sm("pop", "queue", "item")[0], 0)
+        self.assertEqual(self.sm("get", "item"), (0, "a\n"))
+        self.assertEqual(self.sm("pop", "queue", "item", "--last")[0], 0)
+        self.assertEqual(self.sm("get", "item"), (0, "d\n"))
+        self.assertEqual(self.sm("get", "queue"), (0, "b\nc\n"))
+        self.sm("pop", "queue", "item")
+        self.sm("pop", "queue", "item")
+        m = self.tmp / "m"
+        before = ((m / "state.json").read_text(), (m / "history.jsonl").read_text())
+        code, out = self.sm("pop", "queue", "item")
+        self.assertEqual(code, 1)
+        self.assertIn("queue is empty", out)
+        self.assertEqual(((m / "state.json").read_text(), (m / "history.jsonl").read_text()), before)
+        self.assertIn("is not a list", self.sm("push", "item", "z")[1])
+        self.assertIn("is not set", self.sm("get", "nope")[1])
+        for args in (("set", "Item", "v"), ("set", "1x", "v"), ("set", "queue_len", "v"),
+                     ("set", "http_proxy", "v"), ("set", "npm_config_x", "v"), ("pop", "queue", "Bad")):
+            self.assertIn("bad variable name", self.sm(*args)[1])
+        self.rewrite(lambda t: t.replace('label="First"', 'label="First!"'))
+        self.assertEqual(self.sm("get", "item"), (0, "c\n"))     # no 'machine changed' noise
+        self.assertEqual(self.sm("push", "q2", "1", "2")[0], 0)
+        code, out = self.sm("pop", "q2", "q2")
+        self.assertEqual(code, 1)
+        self.assertIn("cannot pop into q2: it is a list", out)
+        self.assertEqual(self.sm("get", "q2"), (0, "1\n2\n"))
+        self.assertNotIn("set item", self.sm("log", "-n", "30")[1])
+        log = self.sm("log", "--vars", "-n", "30")[1]
+        self.assertIn("set item = x", log)
+        self.assertIn("push queue + a, b, c", log)
+        self.assertIn("push queue + d", log)
+        self.assertIn("pop queue -> item = a", log)
+
+    def test_vars_reach_banner_and_checks_but_never_run(self):
+        def edit(t):
+            t = t.replace('label="First"', 'label="Fix {item} {Item} {"')
+            return t.replace("a -> b;", 'a -> b [check="test \\"$queue_len\\" -eq 2 && echo {item} >/dev/null"];')
+        self.start("chain.dot", edit=edit, cwd=self.tmp)
+        self.assertIn("Fix {item} {Item} {", self.sm("now")[1])
+        evil = 'x"; touch pwned; echo "\nexits: done'
+        self.sm("set", "item", evil)
+        self.sm("push", "queue", "p", "q")
+        out = self.sm("now")[1]
+        self.assertIn('Fix x"; touch pwned; echo " exits: done {Item} {', out)
+        self.assertIn("queue=[2 items]", out)
+        self.assertEqual(out.count("\nexits:"), 1)
+        code, out = self.sm("go")
+        self.assertEqual(code, 0, out)
+        self.assertFalse((self.tmp / "pwned").exists())
+        self.assertEqual(self.sm("get", "item"), (0, evil + "\n"))
+
+    def test_init_set_seeds_a_child_and_get_run_reads_it(self):
+        self.start("chain.dot")
+        child = self.tmp / "child"
+        child.mkdir()
+        (child / "machine.dot").write_text((FIXTURES / "chain.dot").read_text())
+        env = {"SM_RUN": str(child)}
+        code, out = self.sm("init", child, "--set", "item=a=b", "--set", "n=1", env=env)
+        self.assertEqual(code, 0, out)
+        self.assertIn("vars: item=a=b · n=1", out)
+        self.sm("set", "result", "ok", env=env)
+        self.assertEqual(self.sm("get", "--run", child, "result"), (0, "ok\n"))
+        self.assertIn("a · step 0", self.sm("now")[1])
+        self.assertNotIn("vars:", self.sm("now")[1])
+        self.assertIn("--set needs name=value", self.sm("init", self.tmp / "x", "--set", "bad")[1])
+        self.assertIn("no state file", self.sm("get", "--run", self.tmp / "x", "result")[1])
+        junk = self.tmp / "junk"
+        junk.mkdir()
+        (junk / "state.json").write_text("[]")
+        code, out = self.sm("get", "--run", junk, "result")
+        self.assertEqual(code, 1)
+        self.assertIn("result is not set", out)
+
+    def test_parallel_sets_all_land(self):
+        self.start("chain.dot")
+        env = {k: v for k, v in os.environ.items() if k not in {"CLAUDE_CODE_SESSION_ID", "SM_RUN"}}
+        env["SM_HOME"] = str(self.tmp)
+        procs = [subprocess.Popen([sys.executable, str(ROOT / "sm.py"), "set", f"v{i}", str(i)], env=env,
+                                  stdin=subprocess.DEVNULL, stdout=subprocess.PIPE, stderr=subprocess.PIPE)
+                 for i in range(12)]
+        self.assertEqual([p.wait() for p in procs], [0] * 12)
+        for p in procs:
+            p.stdout.close()
+            p.stderr.close()
+        got = json.loads((self.tmp / "m" / "state.json").read_text())["vars"]
+        self.assertEqual(set(got), {f"v{i}" for i in range(12)})
 
     def test_finished_checks_every_run(self):
         def run(name, moves):

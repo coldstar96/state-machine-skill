@@ -95,6 +95,30 @@ Stop when a check cannot be made to pass, the task needs work no state covers, a
 
 The user may edit `machine.dot` at any time, or tell you what to change (make exactly that edit). `sm` notices on your next command and prints `machine changed at step N: ...`; if that command was `go`, the move is refused once. Run `sm show`, give the user the change line and the new outline as printed, and continue from the same state. If your state was removed, ask which state to resume in, then `sm jump <state> -m "<their answer>"`. Your own ideas for the graph go to the user first.
 
+## Variables
+
+Variables hold what you must not lose on a context reset: the item you are on, what is left, a result to hand on. They live in the run beside your position.
+
+- `sm set <name> <value>`. `sm push <name> <value>...` appends to a list. `sm pop <name> <into>` moves the first value into `<into>` (a queue); `--last` moves the last (a stack). `sm get <name>` prints a value, a list one per line; `sm get --run <dir> <name>` reads another run's. `sm log --vars` lists the changes.
+- `{name}` in a label is filled in when `sm now` prints it. A list shows its first three values.
+- `sm now` shortens a value to 60 characters. `sm get <name>` gives the full value: use it before acting on a long one.
+- A check sees `$name`, and `$name_len` for a list. Write `"${name_len:-0}"`: the count is unset until the list exists. Quote variables in a check; never paste a value into one.
+- Quote every value in your own shell (`sm set item "$f"`, `sm init <dir> --set item="$f"`). Put `--` before a value that may start with `-`.
+- Names: lowercase letters, digits, `_`; not ending in `_len` or `_proxy`; not `npm_config_*`.
+- Keep variables small: they become environment variables. Never store secrets: values are plain text in `state.json` and the history, shown by `sm now` and passed to `on_move`.
+
+A loop over a queue (`sm push queue a b c` before it starts):
+
+```dot
+check   [label="Check the queue"];
+take    [label="Take the next file: sm pop queue item"];
+process [label="Fix {item}"];
+check   -> take [label="more left", check="test \"${queue_len:-0}\" -gt 0"];
+check   -> done [label="none left", check="test \"${queue_len:-0}\" -eq 0"];
+take    -> process;
+process -> check;
+```
+
 ## Fan-out
 
 Use it when items are found at run time and each gets its own machine, run by a subagent. Subagents share your session, so each child must pin its own run with `SM_RUN`; a plain `sm init` or `sm use` would repoint yours.
@@ -102,7 +126,9 @@ Use it when items are found at run time and each gets its own machine, run by a 
 - Dispatch state: for each item, `sm new <slug> --from <item machine>`. `<slug>` is the item name cut to letters, digits, `-` and `_`, made unique (add an index). Append each printed directory as a line to `<parent run dir>/runs.txt`, and start one subagent per directory.
 - Join state: its exit carries `check="python3 <this skill's directory>/sm.py finished $(cat <parent run dir>/runs.txt)"`. Write the paths in full when drafting: checks run in the `--cwd` directory. The `dir` setting must not contain spaces.
 - If no items can be found, give the machine its own exit that skips the fan-out. An empty `runs.txt` never passes.
-- Child brief: follow this skill, prefix every `sm` call with `SM_RUN=<its dir>`, start with `SM_RUN=<its dir> sm init <its dir> --cwd <directory>`, and never `sm use`.
+- Init each child yourself, after `sm new`: `SM_RUN=<child> sm init <child> --cwd <directory> --set item="<item>"`.
+- Child brief: follow this skill, prefix every `sm` call with `SM_RUN=<its dir>`, start with `SM_RUN=<its dir> sm now`, never `sm init` or `sm use`, and `sm set` its results before its final state.
+- Read the results with `sm get --run <child dir> <name>`.
 - Wait for the subagents to finish, then `sm go`. If the check fails, read the runs it lists and any child's `BLOCKED.md`, and follow "When it does not fit: stop".
 
 ## Finish
@@ -118,4 +144,4 @@ At a final state, report the result and the path taken (`sm log`). "Where are we
 
 ## Commands
 
-`validate`, `show`, `png`, `new`, `config`, `init`, `use`, `now`, `go`, `jump`, `finished`, `log`. `sm <command> --help` gives the flags. `jump` is for a user-directed reposition only.
+`validate`, `show`, `png`, `new`, `config`, `init`, `use`, `now`, `go`, `jump`, `set`, `push`, `pop`, `get`, `finished`, `log`. `sm <command> --help` gives the flags. `jump` is for a user-directed reposition only.

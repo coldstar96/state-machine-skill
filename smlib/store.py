@@ -1,8 +1,10 @@
 from __future__ import annotations
 
+import fcntl
 import json
 import os
 import re
+from contextlib import contextmanager
 from datetime import datetime
 from pathlib import Path
 
@@ -112,6 +114,15 @@ class Run:
         tmp = self.state_file.with_name(self.state_file.name + ".tmp")
         tmp.write_text(json.dumps(state, indent=2))
         os.replace(tmp, self.state_file)
+
+    @contextmanager
+    def lock(self):
+        with (self.dir / ".lock").open("a") as f:
+            fcntl.flock(f, fcntl.LOCK_EX)
+            try:
+                yield
+            finally:
+                fcntl.flock(f, fcntl.LOCK_UN)
 
     def log(self, **entry) -> None:
         entry["ts"] = datetime.now().isoformat(timespec="seconds")

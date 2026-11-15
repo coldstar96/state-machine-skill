@@ -17,7 +17,7 @@ git clone https://github.com/coldstar96/state-machine-skill ~/.claude/skills/sta
 
 For one project only, clone into `.claude/skills/state-machine` inside that project.
 
-Requires Python 3.9 or newer. Graphviz (`dot` on `PATH`) is needed only for `sm png`.
+Requires Python 3.9 or newer on a POSIX system (`sm` uses `fcntl`). Graphviz (`dot` on `PATH`) is needed only for `sm png`.
 
 ## Use
 
@@ -90,16 +90,22 @@ A restricted subset of DOT:
 | `sm validate [dir]` | Parse and check the machine |
 | `sm show [dir]` | Print the outline, with the current state marked |
 | `sm png [dir]` | Draw the machine with Graphviz |
-| `sm init <dir> --cwd <dir>` | Start a run |
+| `sm init <dir> --cwd <dir> [--set name=value]` | Start a run, optionally with variables set |
 | `sm use <dir>` | Point this session at an existing run |
 | `sm now` | Print the current state, its instruction and its exits |
 | `sm go [state] [-m reason]` | Move along an edge |
 | `sm jump <state> -m reason` | Move to any state, ignoring edges (logged) |
 | `sm finished <dir>...` | Exit 0 if every listed run is at a final state; otherwise list the ones that are not |
-| `sm log` | Print recent moves |
+| `sm set <name> <value>` | Set a variable |
+| `sm push <name> <value>...` | Append values to a list variable |
+| `sm pop <name> <into> [--last]` | Move a list's first (or last) value into another variable |
+| `sm get [--run dir] <name>` | Print a variable, from this run or another |
+| `sm log [--vars]` | Print recent moves; `--vars` also lists variable changes |
 | `sm config [key value]` | Show or change settings |
 
 `SM_RUN=<dir>` points a single `sm` call at that run, without changing the session's active machine.
+
+A run can hold variables. `{name}` in a state's label is filled in when it is printed, and a check sees each variable as `$name`. Values are plain text in `state.json` and the history, so do not store secrets.
 
 ## Configure
 
