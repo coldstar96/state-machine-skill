@@ -343,7 +343,9 @@ class CliTests(unittest.TestCase):
 
     def test_show_and_png_before_start(self):
         d = self.copy_fixture("loop.dot")
-        self.assertIn("○ reproduce", self.sm("show", d)[1])
+        self.assertIn("  LOOP\n", self.sm("show", d)[1])
+        self.assertIn("IF (suite green)  ⚙ npm test  BREAK", self.sm("show", d)[1])
+        self.assertIn("○ reproduce", self.sm("show", "--outline", d)[1])
         self.assertEqual(self.sm("validate", d)[0], 0)
         link = self.tmp / "sm_link.py"
         link.symlink_to(ROOT / "sm.py")

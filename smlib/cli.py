@@ -11,7 +11,7 @@ from pathlib import Path
 
 from smlib.dot import Graph, parse
 from smlib.lint import lint
-from smlib.render import highlighted, outline, spaced
+from smlib.render import highlighted, outline, pseudocode, spaced
 from smlib.store import CONFIG_KEYS, Run, changes, home, load_config, save_config
 
 
@@ -232,7 +232,8 @@ def _cmd_show(args) -> int:
         print(str(_invalid(errors)), file=sys.stderr)
     if g is None:
         return 1
-    print(outline(g, state["current"] if state else None))
+    cur = state["current"] if state else None
+    print(outline(g, cur) if args.outline else pseudocode(g, cur))
     return 0
 
 
@@ -486,7 +487,9 @@ def _parser() -> argparse.ArgumentParser:
         return sp
 
     add("validate", _cmd_validate, "parse and lint the machine").add_argument("dir", nargs="?")
-    add("show", _cmd_show, "ASCII outline, current state marked").add_argument("dir", nargs="?")
+    sp = add("show", _cmd_show, "pseudocode view, current state marked")
+    sp.add_argument("--outline", action="store_true", help="ASCII outline instead of pseudocode")
+    sp.add_argument("dir", nargs="?")
     sp = add("png", _cmd_png, "render with Graphviz")
     sp.add_argument("dir", nargs="?")
     sp.add_argument("-o", "--output")

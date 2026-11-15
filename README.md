@@ -42,19 +42,20 @@ digraph fix_bug {
 }
 ```
 
-`sm show` prints it as an outline:
+`sm show` prints it as pseudocode (`--outline` gives the older tree view):
 
 ```
 fix_bug
-  ○ reproduce  Reproduce the bug with a failing test
-      └─▶ fix
-  ○ fix        Apply the minimal fix
-      └─▶ verify
-  ○ verify     Run the full suite
-      ├─▶ done       suite green  ⚙ npm test
-      └─↩ fix        suite red
-  ◎ done       Report the result
+  reproduce:  "Reproduce the bug with a failing test"
+  LOOP
+    fix:        "Apply the minimal fix"
+    verify:     "Run the full suite"
+      IF (suite green)  ⚙ npm test  BREAK
+      IF (suite red)  CONTINUE
+  done:       "Report the result"  END
 ```
+
+`LOOP` repeats its body; `BREAK` jumps to the first line after the loop, `CONTINUE` back to its top; `GOTO x` jumps to the state labeled `x:`. Quoted text is the state's instruction, `( )` holds the condition for a move, and `⚙` is the check command that must pass; `END` marks a final state.
 
 `sm png` draws the same machine with Graphviz, with the current state filled in (here the run is at `verify`):
 
@@ -88,7 +89,7 @@ A restricted subset of DOT:
 |---|---|
 | `sm new <slug> [--from <path>]` | Create a dated directory for a new machine and print its path; `--from` copies a stored machine's `machine.dot` into it |
 | `sm validate [dir]` | Parse and check the machine |
-| `sm show [dir]` | Print the outline, with the current state marked |
+| `sm show [dir]` | Print the machine as pseudocode, with the current state marked (`--outline` for the tree view) |
 | `sm png [dir]` | Draw the machine with Graphviz |
 | `sm init <dir> --cwd <dir> [--set name=value]` | Start a run, optionally with variables set |
 | `sm use <dir>` | Point this session at an existing run |

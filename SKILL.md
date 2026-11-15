@@ -43,7 +43,7 @@ digraph fix_bug {
 Run `sm validate <dir>`, then `sm show <dir>`. Present the machine as one block, every line filled in:
 
 ```
-<the outline, exactly as `sm show` printed it>
+<the machine, exactly as `sm show` printed it>
 Normal path: <states in order>
 Loops: <each loop and what ends it, or "none">
 Finishes: <the final state, or "runs until stopped">
@@ -93,7 +93,7 @@ Stop when a check cannot be made to pass, the task needs work no state covers, a
 
 ## Changes mid-run
 
-The user may edit `machine.dot` at any time, or tell you what to change (make exactly that edit). `sm` notices on your next command and prints `machine changed at step N: ...`; if that command was `go`, the move is refused once. Run `sm show`, give the user the change line and the new outline as printed, and continue from the same state. If your state was removed, ask which state to resume in, then `sm jump <state> -m "<their answer>"`. Your own ideas for the graph go to the user first.
+The user may edit `machine.dot` at any time, or tell you what to change (make exactly that edit). `sm` notices on your next command and prints `machine changed at step N: ...`; if that command was `go`, the move is refused once. Run `sm show`, give the user the change line and the new machine as printed, and continue from the same state. If your state was removed, ask which state to resume in, then `sm jump <state> -m "<their answer>"`. Your own ideas for the graph go to the user first.
 
 ## Variables
 
