@@ -95,8 +95,11 @@ A restricted subset of DOT:
 | `sm now` | Print the current state, its instruction and its exits |
 | `sm go [state] [-m reason]` | Move along an edge |
 | `sm jump <state> -m reason` | Move to any state, ignoring edges (logged) |
+| `sm finished <dir>...` | Exit 0 if every listed run is at a final state; otherwise list the ones that are not |
 | `sm log` | Print recent moves |
 | `sm config [key value]` | Show or change settings |
+
+`SM_RUN=<dir>` points a single `sm` call at that run, without changing the session's active machine.
 
 ## Configure
 

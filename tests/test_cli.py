@@ -21,7 +21,7 @@ class CliTests(unittest.TestCase):
         self.tmp = Path(td.name).resolve()
 
     def sm(self, *args, env=None):
-        full = {k: v for k, v in os.environ.items() if k != "CLAUDE_CODE_SESSION_ID"}
+        full = {k: v for k, v in os.environ.items() if k not in {"CLAUDE_CODE_SESSION_ID", "SM_RUN"}}
         full["SM_HOME"] = str(self.tmp)
         full.update(env or {})
         p = subprocess.run([sys.executable, str(ROOT / "sm.py"), *map(str, args)], env=full,
@@ -43,6 +43,59 @@ class CliTests(unittest.TestCase):
     def rewrite(self, fn):
         p = self.tmp / "m" / "machine.dot"
         p.write_text(fn(p.read_text()))
+
+    def test_sm_run_overrides_the_session_pointer(self):
+        self.start("chain.dot")
+        child = self.tmp / "child"
+        child.mkdir()
+        (child / "machine.dot").write_text((FIXTURES / "chain.dot").read_text())
+        env = {"SM_RUN": str(child)}
+        code, out = self.sm("init", child, env=env)
+        self.assertEqual(code, 0, out)
+        self.assertNotIn("note: this session was on", out)
+        self.assertEqual(self.sm("go", env=env)[0], 0)
+        self.assertIn("b · step 1", self.sm("now", env=env)[1])
+        self.assertIn("a · step 0", self.sm("now")[1])
+        self.assertIn("a · step 0", self.sm("now", env={"SM_RUN": ""})[1])
+        self.assertEqual((self.tmp / ".active" / "default").read_text().strip(), str(self.tmp / "m"))
+        code, out = self.sm("now", env={"SM_RUN": str(self.tmp / "gone")})
+        self.assertEqual(code, 1)
+        self.assertIn("no active machine", out)
+        code, out = self.sm("use", self.tmp / "m", env=env)
+        self.assertEqual(code, 1)
+        self.assertIn("SM_RUN is", out)
+        other = self.tmp / "other"
+        other.mkdir()
+        (other / "machine.dot").write_text((FIXTURES / "chain.dot").read_text())
+        code, out = self.sm("init", other, env=env)
+        self.assertEqual(code, 1)
+        self.assertIn("SM_RUN is", out)
+        self.assertFalse((other / "state.json").exists())
+
+    def test_finished_checks_every_run(self):
+        def run(name, moves):
+            d = self.tmp / name
+            d.mkdir()
+            (d / "machine.dot").write_text((FIXTURES / "chain.dot").read_text())
+            env = {"SM_RUN": str(d)}
+            self.assertEqual(self.sm("init", d, env=env)[0], 0)
+            for _ in range(moves):
+                self.assertEqual(self.sm("go", env=env)[0], 0)
+            return d
+        done1, done2, mid, broken = run("r1", 2), run("r2", 2), run("r3", 1), run("r4", 0)
+        self.assertEqual(self.sm("finished", done1, done2), (0, ""))
+        (mid / "BLOCKED.md").write_text("# Blocked at b\n")
+        (broken / "machine.dot").write_text("digraph x { a -> }")
+        code, out = self.sm("finished", done1, mid, self.tmp / "nope", broken)
+        self.assertEqual(code, 1)
+        self.assertIn(f"{mid}: at b (BLOCKED.md)", out)
+        self.assertIn(f"{self.tmp / 'nope'}: not started", out)
+        self.assertIn(f"{broken}: invalid (", out)
+        self.assertNotIn(f"{done1}:", out)
+        self.assertTrue(out.rstrip().endswith("3 of 4 runs not finished"))
+        code, out = self.sm("finished")
+        self.assertEqual(code, 1)
+        self.assertIn("no runs given", out)
 
     def test_new_from_copies_only_the_machine(self):
         src = self.copy_fixture("chain.dot")

@@ -80,7 +80,7 @@ class Run:
     @classmethod
     def active(cls) -> "Run":
         try:
-            run = cls(_pointer().read_text().strip())
+            run = cls(os.environ.get("SM_RUN") or _pointer().read_text().strip())
         except OSError:
             run = None
         if run is None or not run.dir.is_dir():
@@ -88,6 +88,11 @@ class Run:
         return run
 
     def point(self) -> str | None:
+        if os.environ.get("SM_RUN"):
+            pinned = Run(os.environ["SM_RUN"]).dir
+            if pinned != self.dir:
+                raise ValueError(f"SM_RUN is {pinned}, not {self.dir}")
+            return None
         p = _pointer()
         try:
             prev = p.read_text().strip() or None

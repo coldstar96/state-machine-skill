@@ -26,6 +26,7 @@ class StoreTests(unittest.TestCase):
         env.start()
         self.addCleanup(env.stop)
         os.environ.pop("CLAUDE_CODE_SESSION_ID", None)
+        os.environ.pop("SM_RUN", None)
 
     def test_changes_summary(self):
         old = parse(read("loop.dot"))

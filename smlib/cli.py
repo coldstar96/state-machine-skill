@@ -108,12 +108,16 @@ def _exit(e: dict) -> str:
     return e["dst"] + (f" ({', '.join(parts)})" if parts else "")
 
 
+def _position(run: Run) -> tuple[str, bool]:
+    current = run.state()["current"]
+    return current, parse(_read(run)).is_final(current)
+
+
 def _unfinished(prev: str | None) -> None:
     if not prev:
         return
     try:
-        run = Run(prev)
-        if not parse(run.dot.read_text()).is_final(run.state()["current"]):
+        if not _position(Run(prev))[1]:
             print(f"note: this session was on {prev} (not finished)")
     except (OSError, ValueError, KeyError):
         pass
@@ -203,9 +207,10 @@ def _cmd_init(args) -> int:
     first = g.initial()
     state = {"current": first, "cwd": os.path.abspath(args.cwd or os.getcwd()), "started": _now(),
              "steps": 0, "visits": {first: 1}}
+    prev = run.point()
     run.save(state)
     run.applied.write_text(_read(run))
-    _unfinished(run.point())
+    _unfinished(prev)
     print(_where(g, state))
     _notify(run, g, state)
     return 0
@@ -305,6 +310,30 @@ def _cmd_new(args) -> int:
     return 0
 
 
+def _cmd_finished(args) -> int:
+    if not args.dirs:
+        raise ValueError("no runs given")
+    lines = []
+    for d in args.dirs:
+        run = Run(d)
+        if not run.state_file.exists():
+            lines.append(f"{run.dir}: not started")
+            continue
+        try:
+            current, final = _position(run)
+        except (ValueError, OSError, KeyError) as e:
+            lines.append(f"{run.dir}: invalid ({e})")
+            continue
+        if not final:
+            blocked = " (BLOCKED.md)" if (run.dir / "BLOCKED.md").exists() else ""
+            lines.append(f"{run.dir}: at {current}{blocked}")
+    if not lines:
+        return 0
+    print("\n".join(lines))
+    print(f"{len(lines)} of {len(args.dirs)} runs not finished")
+    return 1
+
+
 def _cmd_log(args) -> int:
     run, _, _, _ = _open(strict=False)
     for e in run.tail(args.n):
@@ -348,6 +377,7 @@ def _parser() -> argparse.ArgumentParser:
     sp = add("new", _cmd_new, "create a dated directory for a new machine")
     sp.add_argument("slug")
     sp.add_argument("--from", dest="src", default=None)
+    add("finished", _cmd_finished, "exit 0 if every run is at a final state").add_argument("dirs", nargs="*")
     sp = add("config", _cmd_config, "show or set user settings")
     sp.add_argument("key", nargs="?")
     sp.add_argument("value", nargs="?")

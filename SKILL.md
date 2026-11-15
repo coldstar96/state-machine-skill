@@ -95,6 +95,16 @@ Stop when a check cannot be made to pass, the task needs work no state covers, a
 
 The user may edit `machine.dot` at any time, or tell you what to change (make exactly that edit). `sm` notices on your next command and prints `machine changed at step N: ...`; if that command was `go`, the move is refused once. Run `sm show`, give the user the change line and the new outline as printed, and continue from the same state. If your state was removed, ask which state to resume in, then `sm jump <state> -m "<their answer>"`. Your own ideas for the graph go to the user first.
 
+## Fan-out
+
+Use it when items are found at run time and each gets its own machine, run by a subagent. Subagents share your session, so each child must pin its own run with `SM_RUN`; a plain `sm init` or `sm use` would repoint yours.
+
+- Dispatch state: for each item, `sm new <slug> --from <item machine>`. `<slug>` is the item name cut to letters, digits, `-` and `_`, made unique (add an index). Append each printed directory as a line to `<parent run dir>/runs.txt`, and start one subagent per directory.
+- Join state: its exit carries `check="python3 <this skill's directory>/sm.py finished $(cat <parent run dir>/runs.txt)"`. Write the paths in full when drafting: checks run in the `--cwd` directory. The `dir` setting must not contain spaces.
+- If no items can be found, give the machine its own exit that skips the fan-out. An empty `runs.txt` never passes.
+- Child brief: follow this skill, prefix every `sm` call with `SM_RUN=<its dir>`, start with `SM_RUN=<its dir> sm init <its dir> --cwd <directory>`, and never `sm use`.
+- Wait for the subagents to finish, then `sm go`. If the check fails, read the runs it lists and any child's `BLOCKED.md`, and follow "When it does not fit: stop".
+
 ## Finish
 
 At a final state, report the result and the path taken (`sm log`). "Where are we?" is answered with `sm show`, or `sm png`.
@@ -108,4 +118,4 @@ At a final state, report the result and the path taken (`sm log`). "Where are we
 
 ## Commands
 
-`validate`, `show`, `png`, `new`, `config`, `init`, `use`, `now`, `go`, `jump`, `log`. `sm <command> --help` gives the flags. `jump` is for a user-directed reposition only.
+`validate`, `show`, `png`, `new`, `config`, `init`, `use`, `now`, `go`, `jump`, `finished`, `log`. `sm <command> --help` gives the flags. `jump` is for a user-directed reposition only.
