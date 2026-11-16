@@ -143,6 +143,14 @@ The tool enforces the position, the edges and the checks: a move that is not an 
 python3 -m unittest discover -s tests
 ```
 
+## Git hooks
+
+`.githooks/post-commit` pushes every commit on a branch to `origin` in the background (log: `.git/auto-push.log`). Install it once per clone:
+
+```sh
+cp .githooks/post-commit "$(git rev-parse --git-common-dir)/hooks/"
+```
+
 ## License
 
 MIT. See `LICENSE`.
