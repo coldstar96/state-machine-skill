@@ -11,6 +11,7 @@ class Graph:
         self.name = name
         self.nodes: dict[str, dict[str, str]] = {}
         self.edges: list[dict] = []
+        self.attrs: dict[str, str] = {}
 
     def entries(self) -> list[str]:
         return [n for n, a in self.nodes.items() if a.get("shape") == "point"]
@@ -171,12 +172,18 @@ def parse(text: str) -> Graph:
         if first[0] == "ID" and first[1] == "subgraph":
             fail(first, "subgraphs are not supported")
         if first[0] == "ID" and first[1] in ("node", "edge", "graph") and peek()[0] == "[":
-            if "check" in attrs():
-                fail(first, "check is not supported as a default; put it on each edge")
+            a = attrs()
+            for k in a:
+                if k in ("check", "ask"):
+                    fail(first, f"{k} is not supported as a default; put it on each edge")
+                if k.startswith("on_") and first[1] != "graph":
+                    fail(first, f"{k} is not supported as a default; hooks go in graph [{k}=...]")
+            if first[1] == "graph":
+                g.attrs.update(a)
             continue
         if peek()[0] == "=":
             take()
-            take("ID", "STR")
+            g.attrs[first[1]] = take("ID", "STR")[1]
             continue
         src = state_id(first)
         if peek()[0] == "->":
@@ -186,7 +193,8 @@ def parse(text: str) -> Graph:
                 fail(peek(), "chained edges are not supported")
             a = attrs() if peek()[0] == "[" else {}
             g.edges.append({"src": src, "dst": dst, "label": a.get("label", ""),
-                            "check": a.get("check", ""), "line": first[2]})
+                            "check": a.get("check", ""), "ask": a.get("ask", ""), "ask_set": "ask" in a,
+                            "line": first[2]})
         else:
             g.nodes.setdefault(src, {}).update(attrs() if peek()[0] == "[" else {})
 

@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from smlib.dot import Graph
+from smlib.store import HOOKS
 
 
 def lint(g: Graph, label_max: int = 40) -> tuple[list[str], list[str]]:
@@ -17,6 +18,12 @@ def lint(g: Graph, label_max: int = 40) -> tuple[list[str], list[str]]:
         for e in outs:
             if e["check"]:
                 errors.append(f"entry edge {ent} -> {e['dst']} (line {e['line']}) must not have a check")
+            if e["ask_set"]:
+                errors.append(f"entry edge {ent} -> {e['dst']} (line {e['line']}) must not have an ask")
+
+    for k in g.attrs:
+        if k.startswith("on_") and k not in HOOKS:
+            errors.append(f"graph attribute {k}: unknown hook; hooks: {', '.join(HOOKS)}")
 
     seen: set[tuple[str, str]] = set()
     for e in g.edges:
@@ -24,6 +31,8 @@ def lint(g: Graph, label_max: int = 40) -> tuple[list[str], list[str]]:
         for end in pair:
             if end not in g.nodes:
                 errors.append(f"edge {e['src']} -> {e['dst']} (line {e['line']}): undeclared state {end}")
+        if e["ask_set"] and not e["ask"] and e["src"] not in entries:
+            errors.append(f"edge {e['src']} -> {e['dst']} (line {e['line']}): ask needs a question")
         if pair in seen:
             errors.append(f"edge {e['src']} -> {e['dst']} (line {e['line']}): duplicate edge")
         seen.add(pair)

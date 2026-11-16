@@ -81,6 +81,13 @@ A restricted subset of DOT:
 - A final state has `shape=doublecircle`. A machine with no final state runs until stopped.
 - An edge `label` is the condition for taking it. Every exit of a state with more than one exit needs one.
 - An edge `check="<command>"` is run in the working directory given to `sm init`; the move is allowed only if it exits 0.
+- An edge `ask="<question>"` makes the move wait for a person: `sm go` is refused until it is given `--user "<answer>"`, which is recorded in the history. The agent is told to put the question to you verbatim; the tool cannot tell a real answer from an invented one. `sm jump` bypasses checks and ask gates.
+
+```dot
+verify -> done [label="suite green", check="npm test", ask="Ship it?"];
+```
+
+In `sm show`, a `👤` marks an ask exit (`--full` adds the question).
 
 ## Commands
 
@@ -95,7 +102,8 @@ A restricted subset of DOT:
 | `sm init <dir> --cwd <dir> [--set name=value]` | Start a run, optionally with variables set |
 | `sm use <dir>` | Point this session at an existing run |
 | `sm now` | Print the current state, its instruction and its exits |
-| `sm go [state] [-m reason]` | Move along an edge |
+| `sm go [state] [-m reason] [--user answer]` | Move along an edge; `--user` carries the person's answer to an `ask` exit |
+| `sm block -m reason` | Record that the run is stopped on `BLOCKED.md` (which must exist) and fire `on_blocked` |
 | `sm jump <state> -m reason` | Move to any state, ignoring edges (logged) |
 | `sm finished <dir>...` | Exit 0 if every listed run is at a final state; otherwise list the ones that are not |
 | `sm set <name> <value>` | Set a variable |
@@ -116,15 +124,41 @@ Settings live in `config.json` under `SM_HOME` (default `~/.claude/state-machine
 | Key | Meaning | Default |
 |---|---|---|
 | `dir` | Where `sm new` creates machine directories | `SM_HOME` |
-| `on_move` | Shell command run after every state change | none |
 | `view` | What `sm show` prints: `pseudocode` or `outline` (flags `--outline`, `--pseudocode` override) | `pseudocode` |
 | `detail` | `short` or `full`: whether `sm show` includes `do` text and check commands (flags `--full`, `--short` override) | `short` |
 | `label_max` | Positive integer: a longer label draws a lint note to move the detail into `do=` | `40` |
 
-`on_move` runs in the machine directory with `SM_STATE`, `SM_MACHINE`, `SM_DIR` and `SM_STEP` set. Its output is discarded, it is stopped after 10 seconds, and a failure never affects the move. For example, to keep the current state in a file a status line can read:
+### Hooks
+
+One setting per event, each a shell command: `sm config on_<event> '<cmd>'` for every machine, or a graph attribute in one `machine.dot`, `graph [on_finish="<cmd>"]` (the bare `on_finish="<cmd>";` also works). When both are set the global one runs first, then the machine's. Hooks run synchronously in the machine directory, each stopped after 10 seconds; output is discarded and a failure never affects the run. A hook that runs `sm` does not fire further hooks. A misspelt `on_*` graph attribute is a lint error. A machine's hooks are shell from the DOT, like `check=`: read them before running a machine you did not write (`sm show --full` prints them).
+
+Every hook gets `SM_EVENT`, `SM_STATE`, `SM_MACHINE`, `SM_DIR`, `SM_STEP` and the run's variables, plus:
+
+| Key | Fires | Extra env |
+|---|---|---|
+| `on_move` | after `go`, `jump` or `init` enter a state | `SM_FROM` (empty on init), `SM_REASON`, `SM_KIND` (go, jump, init), `SM_FINAL` (1 or 0) |
+| `on_finish` | after a move into a final state, after `on_move` | same as `on_move` |
+| `on_check_fail` | `sm go` refused by a failing check | `SM_TO`, `SM_CHECK`, `SM_EXIT` |
+| `on_ask` | `sm go` refused because the exit needs the user | `SM_TO`, `SM_QUESTION` |
+| `on_blocked` | `sm block` | `SM_REASON`, `SM_BLOCKED` (path of `BLOCKED.md`) |
+| `on_edit` | `sm` notices `machine.dot` changed mid-run | `SM_CHANGES` (change lines) |
+| `on_var` | after `set`, `push` or `pop` | `SM_VAR`, `SM_OP`, `SM_VALUE`, `SM_INTO` (pop) |
+
+For example, to keep the current state in a file a status line can read, or to be told when a run finishes:
 
 ```sh
 sm config on_move 'echo "$SM_MACHINE: $SM_STATE" > ~/.sm-status'
+```
+
+```dot
+digraph release {
+  graph [on_finish="osascript -e 'display notification \"release done\"'"];
+  __start__ [shape=point];
+  __start__ -> build;
+  build [label="Build"];
+  done  [label="Done", shape=doublecircle];
+  build -> done [label="built", check="make", ask="Ship it?"];
+}
 ```
 
 ## Files in a machine directory
@@ -133,7 +167,7 @@ sm config on_move 'echo "$SM_MACHINE: $SM_STATE" > ~/.sm-status'
 |---|---|
 | `machine.dot` | The graph. Yours to edit. |
 | `state.json` | Current state, step count, visits |
-| `history.jsonl` | Every move and every graph edit |
+| `history.jsonl` | Every move (with the user's answer, if any), every graph edit, every `sm block` |
 | `machine.applied.dot` | The graph as last accepted, used to detect edits |
 | `BLOCKED.md` | Written by the agent when it had to stop |
 

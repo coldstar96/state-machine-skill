@@ -181,5 +181,18 @@ class RenderTests(unittest.TestCase):
         self.assertNotIn("unreachable:", out)
 
 
+    def test_ask_edges_show_a_person_marker_and_full_adds_the_question(self):
+        g = parse('digraph g { s [shape=point]; s -> a; a [label=A]; b [label=B]; c [label=C, shape=doublecircle];'
+                  ' a -> b [ask="Ship it?"]; b -> c [label=ok, check="true", ask="Sure?"]; b -> a [label=no]; }')
+        short, full = pseudocode(g), pseudocode(g, full=True)
+        self.assertIn("IF 👤", short)
+        self.assertIn("IF (ok)  ⚙  👤", short)
+        self.assertNotIn("Sure?", short)
+        self.assertIn('IF 👤 "Ship it?"', full)
+        self.assertIn('IF (ok)  ⚙ true  👤 "Sure?"', full)
+        self.assertRegex(outline(g), r"▶ b\s+👤\n")
+        self.assertRegex(outline(g, full=True), r'▶ c\s+ok  ⚙ true  👤 "Sure\?"')
+
+
 if __name__ == "__main__":
     unittest.main()

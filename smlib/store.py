@@ -16,6 +16,10 @@ def _edges(g: Graph) -> dict[tuple[str, str], dict]:
     return {(e["src"], e["dst"]): e for e in g.edges if e["src"] in states and e["dst"] in states}
 
 
+def _hooks(g: Graph) -> dict[str, str]:
+    return {k: v for k, v in g.attrs.items() if k.startswith("on_")}
+
+
 def changes(old: Graph, new: Graph) -> list[str]:
     os_, ns = old.states(), new.states()
     oe, ne = _edges(old), _edges(new)
@@ -30,12 +34,16 @@ def changes(old: Graph, new: Graph) -> list[str]:
     out += [f"{s}: final changed" for s in both if old.is_final(s) != new.is_final(s)]
     out += [f"{a}->{b}: label changed" for a, b in both_e if oe[a, b].get("label") != ne[a, b].get("label")]
     out += [f"{a}->{b}: check changed" for a, b in both_e if oe[a, b].get("check") != ne[a, b].get("check")]
+    out += [f"{a}->{b}: ask changed" for a, b in both_e if oe[a, b].get("ask") != ne[a, b].get("ask")]
+    if _hooks(old) != _hooks(new):
+        out.append("hooks changed")
     if old.initial() != new.initial():
         out.append(f"initial: {old.initial()} -> {new.initial()}")
     return out
 
 
-CONFIG_KEYS = ("dir", "on_move", "view", "detail", "label_max")
+HOOKS = ("on_move", "on_finish", "on_check_fail", "on_ask", "on_blocked", "on_edit", "on_var")
+CONFIG_KEYS = ("dir", *HOOKS, "view", "detail", "label_max")
 
 
 def home() -> Path:

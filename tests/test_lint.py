@@ -5,6 +5,7 @@ from pathlib import Path
 
 from smlib.dot import parse
 from smlib.lint import lint
+from smlib.store import HOOKS
 
 
 def read(name):
@@ -42,3 +43,19 @@ class LintTests(unittest.TestCase):
                          ([], ["state a: label is 41 chars; keep it short, put detail in do="]))
         self.assertEqual(lint(parse(dot("x" * 11)), label_max=10)[1],
                          ["state a: label is 11 chars; keep it short, put detail in do="])
+
+    def test_unknown_hook_attribute_is_an_error(self):
+        def dot(attr):
+            return f'digraph g {{ {attr}; s [shape=point]; s -> a; a [label=x, shape=doublecircle]; }}'
+        errors, _ = lint(parse(dot("graph [on_finsh=x]")))
+        self.assertEqual(errors, ["graph attribute on_finsh: unknown hook; hooks: " + ", ".join(HOOKS)])
+        self.assertEqual(lint(parse(dot("rankdir=LR; graph [on_finish=x, fontname=y]"))), ([], []))
+
+    def test_ask_rules(self):
+        base = 's [shape=point]; s -> a%s; a [label=x]; b [label=y, shape=doublecircle]; a -> b%s;'
+        ok = lint(parse("digraph g { " + base % ("", ' [ask="Ship it?"]') + " }"))
+        self.assertEqual(ok, ([], []))
+        errors, _ = lint(parse("digraph g { " + base % ("", ' [ask=""]') + " }"))
+        self.assertTrue(any("ask needs a question" in e for e in errors), errors)
+        errors, _ = lint(parse("digraph g { " + base % (' [ask="x"]', "") + " }"))
+        self.assertTrue(any("entry edge s -> a" in e and "must not have an ask" in e for e in errors), errors)

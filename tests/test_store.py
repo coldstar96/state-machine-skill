@@ -38,6 +38,13 @@ class StoreTests(unittest.TestCase):
                                              "-edge verify->done", "fix: label changed"])
         self.assertEqual(changes(old, parse(read("loop.dot").replace("digraph fix_bug {", "digraph fix_bug {\n  rankdir=LR; // x"))), [])
 
+    def test_hook_changes_are_reported_other_graph_attrs_are_not(self):
+        src = "digraph g { %s a -> b; }"
+        old = parse(src % "graph [on_move=x, rankdir=LR];")
+        self.assertEqual(changes(old, parse(src % "graph [on_move=y, rankdir=TB];")), ["hooks changed"])
+        self.assertEqual(changes(old, parse(src % "graph [on_move=x, rankdir=TB];")), [])
+        self.assertEqual(changes(old, parse(src % "")), ["hooks changed"])
+
     def test_pointer_is_per_session_key(self):
         a, b = Run(self.tmp / "a"), Run(self.tmp / "b")
         self.assertIsNone(a.point())
@@ -48,6 +55,12 @@ class StoreTests(unittest.TestCase):
                 Run.active()
             a.point()
             self.assertTrue((self.home / ".active" / "___x_y").is_file())
+
+
+    def test_ask_changes_are_reported(self):
+        old = parse('digraph g { a [label=A]; b [label=B]; a -> b [ask="ok?"]; }')
+        self.assertEqual(changes(old, parse('digraph g { a [label=A]; b [label=B]; a -> b; }')), ["a->b: ask changed"])
+        self.assertEqual(changes(old, old), [])
 
 
 if __name__ == "__main__":

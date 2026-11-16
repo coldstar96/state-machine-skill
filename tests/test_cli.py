@@ -480,5 +480,178 @@ class CliTests(unittest.TestCase):
         self.assertIn("[chain] c", out)
 
 
+    def log_hook(self, event, line):
+        self.sm("config", f"on_{event}", f'{line} >> "$SM_HOME/ev.log"')
+
+    def events(self):
+        p = self.tmp / "ev.log"
+        return p.read_text().splitlines() if p.exists() else []
+
+    def test_move_and_finish_hooks_carry_from_kind_final_and_reason(self):
+        fields = 'echo "$SM_EVENT|$SM_STATE|$SM_FROM|$SM_KIND|$SM_FINAL|$SM_REASON"'
+        self.log_hook("move", fields)
+        self.log_hook("finish", fields)
+        self.start("chain.dot")
+        self.sm("go")
+        self.sm("go")
+        self.assertEqual(self.events(), ["move|a||init|0|", "move|b|a|go|0|", "move|c|b|go|1|", "finish|c|b|go|1|"])
+        (self.tmp / "ev.log").unlink()
+        (self.tmp / "m" / "state.json").unlink()
+        self.sm("init", self.tmp / "m")
+        self.sm("jump", "c", "-m", "why")
+        self.assertEqual(self.events()[1:], ["move|c|a|jump|1|why", "finish|c|a|jump|1|why"])
+
+    def test_init_at_a_final_state_fires_finish(self):
+        self.log_hook("finish", 'echo "$SM_EVENT|$SM_KIND"')
+        self.start("chain.dot", edit=lambda t: "digraph g { s [shape=point]; s -> z; z [label=Z, shape=doublecircle]; }")
+        self.assertEqual(self.events(), ["finish|init"])
+
+    def test_global_hook_runs_before_machine_hook_and_failures_are_ignored(self):
+        self.log_hook("finish", "{ echo global; exit 5; }")
+        hook = 'echo machine >> \\"$SM_HOME/ev.log\\"; exit 6'
+        self.start("chain.dot", edit=lambda t: t.replace("start [", f'graph [on_finish="{hook}"];\n  start [', 1))
+        self.sm("go")
+        code, out = self.sm("go")
+        self.assertEqual(code, 0, out)
+        self.assertEqual(self.events(), ["global", "machine"])
+
+    def test_machine_hook_bare_statement_form(self):
+        self.start("chain.dot", edit=lambda t: t.replace(
+            "start [", 'on_move="echo bare >> $SM_HOME/ev.log";\n  start [', 1))
+        self.assertEqual(self.events(), ["bare"])
+
+    def test_check_fail_hook_gets_target_command_and_exit(self):
+        self.log_hook("check_fail", 'echo "$SM_EVENT|$SM_STATE|$SM_TO|$SM_CHECK|$SM_EXIT"')
+        self.start("loop.dot", edit=lambda t: t.replace("npm test", "exit 3"))
+        for _ in range(3):
+            self.sm("go")
+        code, out = self.sm("go", "done")
+        self.assertEqual(code, 1)
+        self.assertIn("check failed (exit 3): exit 3", out)
+        self.assertEqual(self.events(), ["check_fail|verify|done|exit 3|3"])
+
+    def test_edit_hook_gets_the_change_lines(self):
+        self.log_hook("edit", 'echo "$SM_EVENT|$SM_CHANGES"')
+        self.start("chain.dot")
+        self.rewrite(lambda t: t.replace("First", "Zero"))
+        self.sm("go")
+        self.assertEqual(self.events(), ["edit|a: label changed"])
+        self.sm("go")
+        self.assertEqual(self.events(), ["edit|a: label changed"])
+
+    def test_var_hooks_after_set_push_pop_and_survive_a_broken_machine(self):
+        self.log_hook("var", 'printf "%s|%s|%s|%s|%s\\n" "$SM_VAR" "$SM_OP" "$(printf %s "$SM_VALUE" | tr "\\n" ,)" "$SM_INTO" "$SM_MACHINE"')
+        self.start("chain.dot")
+        self.sm("set", "x", "1")
+        self.sm("push", "q", "a", "b")
+        self.sm("pop", "q", "got")
+        (self.tmp / "m" / "machine.applied.dot").write_text("garbage")
+        self.assertEqual(self.sm("set", "y", "2")[0], 0)
+        self.assertEqual(self.events(), ["x|set|1||chain", "q|push|a,b||chain", "q|pop|a|got|chain", "y|set|2||"])
+
+    def test_var_never_runs_a_machine_hook_added_since_the_last_sync(self):
+        self.start("chain.dot")
+        m = self.tmp / "m" / "machine.dot"
+        m.write_text(m.read_text().replace("start [", 'graph [on_var="touch $SM_DIR/pwn"];\n  start [', 1))
+        self.assertEqual(self.sm("set", "x", "1")[0], 0)
+        self.assertFalse((self.tmp / "m" / "pwn").exists())
+
+    def test_a_hook_that_runs_sm_does_not_recurse(self):
+        self.log_hook("var", f'{{ echo "$SM_VAR"; [ "$SM_VAR" = x ] && "{sys.executable}" "{ROOT / "sm.py"}" set y 1; }}')
+        self.start("chain.dot")
+        self.assertEqual(self.sm("set", "x", "1")[0], 0)
+        self.assertEqual(self.events(), ["x"])
+        self.assertEqual(self.sm("get", "y"), (0, "1\n"))
+
+    def test_show_full_lists_machine_hooks(self):
+        d = self.copy_fixture("chain.dot", edit=lambda t: t.replace("start [", 'graph [on_finish="notify-send done"];\n  start [', 1))
+        self.assertIn("hooks: on_finish=notify-send done\n", self.sm("show", "--full", d)[1])
+        self.assertNotIn("hooks:", self.sm("show", d)[1])
+        self.assertIn("hooks: on_finish=notify-send done\n", self.sm("show", "--full", "--outline", d)[1])
+
+    def test_config_accepts_every_hook_key(self):
+        out = self.sm("config")[1]
+        for key in ("on_move", "on_finish", "on_check_fail", "on_ask", "on_blocked", "on_edit", "on_var"):
+            self.assertIn(f"{key} = (not set)", out)
+            self.assertEqual(self.sm("config", key, "true")[0], 0)
+
+
+    def ask_chain(self, **kw):
+        return self.start("chain.dot", edit=lambda t: t.replace("a -> b;", 'a -> b [ask="Ship it?"];'), **kw)
+
+    def test_ask_exit_is_refused_until_the_user_answers_and_the_answer_is_logged(self):
+        self.log_hook("ask", 'echo "$SM_EVENT|$SM_STATE|$SM_TO|$SM_QUESTION"')
+        self.ask_chain()
+        self.assertIn("b (asks user)", self.sm("now")[1])
+        code, out = self.sm("go")
+        self.assertEqual(code, 1)
+        self.assertIn('refused: b needs the user: ask "Ship it?", then sm go b --user "<their answer>"', out)
+        self.assertIn("a · step 0", self.sm("now")[1])
+        self.assertEqual(self.events(), ["ask|a|b|Ship it?"])
+        for empty in ("", "  "):
+            code, out = self.sm("go", "--user", empty)
+            self.assertEqual((code, "--user needs the user's answer" in out), (1, True))
+        self.assertEqual(self.sm("go", "b", "--user", "yes, ship\nit")[0], 0)
+        self.assertIn("a -> b (user: yes, ship it)", self.sm("log")[1])
+        self.assertEqual(json.loads((self.tmp / "m" / "history.jsonl").read_text().splitlines()[-1])["user"], "yes, ship\nit")
+
+    def test_user_answer_on_an_exit_without_ask_is_allowed_and_logged(self):
+        self.start("chain.dot")
+        self.assertEqual(self.sm("go", "--user", "fine")[0], 0)
+        self.assertIn("a -> b (user: fine)", self.sm("log")[1])
+
+    def test_failing_check_is_refused_before_ask(self):
+        self.log_hook("check_fail", "echo check_fail")
+        self.sm("config", "on_ask", 'echo ask >> "$SM_HOME/ev.log"')
+        self.start("chain.dot", edit=lambda t: t.replace("a -> b;", 'a -> b [check="false", ask="Ship it?"];'))
+        code, out = self.sm("go")
+        self.assertEqual(code, 1)
+        self.assertIn("check failed (exit 1): false", out)
+        self.assertNotIn("needs the user", out)
+        self.assertEqual(self.events(), ["check_fail"])
+
+    def test_ask_on_a_multi_exit_state_names_the_reason_flag(self):
+        self.start("loop.dot", edit=lambda t: t.replace('label="suite red"', 'label="suite red", ask="Retry?"'))
+        for _ in range(3):
+            self.sm("go")
+        code, out = self.sm("go", "fix")
+        self.assertIn("reason required", out)
+        code, out = self.sm("go", "fix", "-m", "red")
+        self.assertEqual(code, 1)
+        self.assertIn('then sm go fix -m "<why>" --user "<their answer>"', out)
+        self.assertEqual(self.sm("go", "fix", "-m", "red", "--user", "retry")[0], 0)
+        self.assertIn("(red) (user: retry)", self.sm("log")[1])
+
+    def test_removing_ask_mid_run_is_noticed_and_refuses_the_first_go(self):
+        self.ask_chain()
+        self.rewrite(lambda t: t.replace(' [ask="Ship it?"]', ""))
+        code, out = self.sm("go")
+        self.assertEqual(code, 1)
+        self.assertIn("a->b: ask changed", out)
+        self.assertIn("a · step 0", self.sm("now")[1])
+        self.assertEqual(self.sm("go")[0], 0)
+
+    def test_jump_bypasses_an_ask_gate(self):
+        self.ask_chain()
+        self.assertEqual(self.sm("jump", "b", "-m", "user said so")[0], 0)
+
+    def test_show_marks_ask_exits(self):
+        d = self.copy_fixture("chain.dot", edit=lambda t: t.replace("a -> b;", 'a -> b [ask="Ship it?"];'))
+        self.assertIn("IF 👤", self.sm("show", d)[1])
+        self.assertIn('IF 👤 "Ship it?"', self.sm("show", "--full", d)[1])
+
+    def test_block_needs_blocked_md_logs_and_fires_on_blocked(self):
+        self.log_hook("blocked", 'echo "$SM_EVENT|$SM_REASON|$SM_BLOCKED"')
+        self.start("chain.dot")
+        code, out = self.sm("block", "-m", "waiting for: ok?")
+        self.assertEqual((code, "write BLOCKED.md first" in out), (1, True))
+        self.assertEqual(self.sm("block")[0], 2)
+        (self.tmp / "m" / "BLOCKED.md").write_text("stuck")
+        self.assertEqual(self.sm("block", "-m", "waiting for: ok?")[0], 0)
+        self.assertEqual(self.events(), [f"blocked|waiting for: ok?|{self.tmp / 'm' / 'BLOCKED.md'}"])
+        self.assertRegex(self.sm("log")[1], r"-- \d\d:\d\d blocked: waiting for: ok\?")
+        self.assertIn("a · step 0", self.sm("now")[1])
+
+
 if __name__ == "__main__":
     unittest.main()

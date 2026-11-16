@@ -102,6 +102,8 @@ def _sync(run: Run, state: dict) -> tuple[Graph | None, list[str], list[str], bo
             print(f"machine changed at step {state['steps']}: {summary}")
             run.log(kind="edit", step=state["steps"], summary=summary)
         run.applied.write_text(text)
+        if items:
+            _fire(run, g, state, "edit", changes="\n".join(items))
     return g, errors, notes, bool(items)
 
 
@@ -173,7 +175,7 @@ def _where(g: Graph, state: dict) -> str:
 
 
 def _exit(e: dict) -> str:
-    parts = ([e["label"]] if e["label"] else []) + (["checked"] if e["check"] else [])
+    parts = ([e["label"]] if e["label"] else []) + (["checked"] if e["check"] else []) + (["asks user"] if e["ask"] else [])
     return e["dst"] + (f" ({', '.join(parts)})" if parts else "")
 
 
@@ -192,6 +194,12 @@ def _unfinished(prev: str | None) -> None:
         pass
 
 
+class CheckFailed(ValueError):
+    def __init__(self, message: str, cmd: str, code: int) -> None:
+        super().__init__(message)
+        self.cmd, self.code = cmd, code
+
+
 def _check(cmd: str, cwd: str, env: dict[str, str]) -> None:
     if not os.path.isdir(cwd):
         raise ValueError(f"check directory is gone: {cwd}")
@@ -199,34 +207,62 @@ def _check(cmd: str, cwd: str, env: dict[str, str]) -> None:
                        stdout=subprocess.PIPE, stderr=subprocess.STDOUT, encoding="utf-8", errors="replace")
     if r.returncode:
         tail = r.stdout.splitlines()[-15:]
-        raise ValueError("\n".join([f"check failed (exit {r.returncode}): {cmd}", *tail]))
+        raise CheckFailed("\n".join([f"check failed (exit {r.returncode}): {cmd}", *tail]), cmd, r.returncode)
 
 
-def _notify(run: Run, g: Graph, state: dict) -> None:
+def _fire(run: Run, g: Graph | None, state: dict, event: str, **extra) -> None:
+    # global hook first, then the machine's; never blocks, never raises; SM_IN_HOOK stops a hook that runs sm from re-firing
+    if os.environ.get("SM_IN_HOOK"):
+        return
     try:
-        cmd = load_config().get("on_move")
-        if cmd:
-            env = {**os.environ, "SM_STATE": state["current"], "SM_MACHINE": g.name, "SM_DIR": str(run.dir),
-                   "SM_STEP": str(state["steps"]), **_var_env(state)}
+        cmds = [_settings().get(f"on_{event}"), g.attrs.get(f"on_{event}") if g else None]
+    except Exception:
+        return
+    for cmd in cmds:
+        if not cmd:
+            continue
+        try:
+            env = {**os.environ, "SM_IN_HOOK": "1", "SM_EVENT": event, "SM_STATE": state["current"],
+                   "SM_MACHINE": g.name if g else "", "SM_DIR": str(run.dir), "SM_STEP": str(state["steps"]),
+                   **_var_env(state), **{f"SM_{k.upper()}": "" if v is None else str(v) for k, v in extra.items()}}
             subprocess.run(cmd, shell=True, cwd=run.dir, env=env, stdin=subprocess.DEVNULL,
                            stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL, timeout=10)
+        except Exception:
+            pass
+
+
+def _fire_moved(run: Run, g: Graph, state: dict, **extra) -> None:
+    final = g.is_final(state["current"])
+    extra["final"] = "1" if final else "0"
+    _fire(run, g, state, "move", **extra)
+    if final:
+        _fire(run, g, state, "finish", **extra)
+
+
+def _fire_var(run: Run, state: dict, **extra) -> None:
+    # the last machine the user saw, not live edits that sm has not announced yet
+    try:
+        g, errors, _ = _parse_lint(run.applied.read_text())
     except Exception:
-        pass
+        g, errors = None, [""]
+    _fire(run, None if errors else g, state, "var", **extra)
 
 
-def _move(run: Run, state: dict, g: Graph, to: str, reason: str | None, checked: bool, jump: bool) -> int:
+def _move(run: Run, state: dict, g: Graph, to: str, reason: str | None, checked: bool, jump: bool,
+          user: str | None = None) -> int:
     with run.lock():
         fresh = run.state()
         if fresh["current"] != state["current"]:
             raise ValueError("the run moved meanwhile; run sm now")
+        src = fresh["current"]
         fresh["steps"] += 1
         fresh["visits"][to] = fresh["visits"].get(to, 0) + 1
         run.log(kind="move", step=fresh["steps"], to=to, reason=reason, check="ok" if checked else None,
-                jump=jump, **{"from": fresh["current"]})
+                jump=jump, user=user, **{"from": fresh["current"]})
         fresh["current"] = to
         run.save(fresh)
     print(_where(g, fresh))
-    _notify(run, g, fresh)
+    _fire_moved(run, g, fresh, **{"from": src, "reason": reason, "kind": "jump" if jump else "go"})
     return 0
 
 
@@ -298,7 +334,7 @@ def _cmd_init(args) -> int:
     run.applied.write_text(_read(run))
     _unfinished(prev)
     print(_where(g, state))
-    _notify(run, g, state)
+    _fire_moved(run, g, state, **{"from": "", "reason": "", "kind": "init"})
     return 0
 
 
@@ -317,6 +353,8 @@ def _cmd_now(args) -> int:
 
 
 def _cmd_go(args) -> int:
+    if args.user is not None and not args.user.strip():
+        raise ValueError("--user needs the user's answer")
     run, state, g, changed = _open()
     if changed:
         print(_where(g, state))
@@ -334,11 +372,30 @@ def _cmd_go(args) -> int:
     edge = next((e for e in exits if e["dst"] == target), None)
     if edge is None:
         raise ValueError(f"no edge {cur} -> {target}; exits: {names}")
-    if edge["check"]:
-        _check(edge["check"], state["cwd"], _var_env(state))
-    elif len(exits) > 1 and not args.reason:
+    if not edge["check"] and len(exits) > 1 and not args.reason:
         raise ValueError('reason required: -m "<why this exit>"')
-    return _move(run, state, g, target, args.reason, bool(edge["check"]), False)
+    if edge["check"]:
+        try:
+            _check(edge["check"], state["cwd"], _var_env(state))
+        except CheckFailed as e:
+            _fire(run, g, state, "check_fail", to=target, check=e.cmd, exit=e.code)
+            raise
+    if edge["ask"] and args.user is None:
+        _fire(run, g, state, "ask", to=target, question=edge["ask"])
+        why = ' -m "<why>"' if len(exits) > 1 else ""
+        raise ValueError(f'refused: {target} needs the user: ask "{edge["ask"]}", '
+                         f'then sm go {target}{why} --user "<their answer>"')
+    return _move(run, state, g, target, args.reason, bool(edge["check"]), False, args.user)
+
+
+def _cmd_block(args) -> int:
+    run, state, g, _ = _open(strict=False)
+    blocked = run.dir / "BLOCKED.md"
+    if not blocked.exists():
+        raise ValueError("write BLOCKED.md first")
+    run.log(kind="block", step=state["steps"], reason=args.reason)
+    _fire(run, g, state, "blocked", reason=args.reason, blocked=str(blocked))
+    return 0
 
 
 def _cmd_jump(args) -> int:
@@ -437,6 +494,9 @@ def _cmd_log(args) -> int:
         if e["kind"] == "edit":
             print(f"-- {hm} edit at step {e['step']}: {e['summary']}")
             continue
+        if e["kind"] == "block":
+            print(f"-- {hm} blocked: {_show(e['reason'], 200)}")
+            continue
         if e["kind"] == "var":
             if e["op"] == "set":
                 print(f"-- {hm} set {e['name']} = {_show(e['value'])}")
@@ -447,6 +507,7 @@ def _cmd_log(args) -> int:
             continue
         line = f"{e['step']} {hm} {e['from']} -> {e['to']}"
         line += f" ({e['reason']})" if e["reason"] else ""
+        line += f" (user: {_show(e['user'])})" if e.get("user") else ""
         line += " [check ok]" if e["check"] else ""
         line += " JUMP" if e["jump"] else ""
         print(line)
@@ -460,6 +521,7 @@ def _cmd_set(args) -> int:
         state = run.state()
         state.setdefault("vars", {})[name] = args.value
         _save_var(run, state, op="set", name=name, value=_show(args.value, 200))
+    _fire_var(run, state, var=name, op="set", value=args.value)
     return 0
 
 
@@ -473,6 +535,7 @@ def _cmd_push(args) -> int:
             raise ValueError(f"{name} is not a list")
         state["vars"][name] = items + args.values
         _save_var(run, state, op="push", name=name, items=[_show(v, 200) for v in args.values])
+    _fire_var(run, state, var=name, op="push", value="\n".join(args.values))
     return 0
 
 
@@ -492,6 +555,7 @@ def _cmd_pop(args) -> int:
         value = items.pop(-1 if args.last else 0)
         values[into] = value
         _save_var(run, state, op="pop", name=name, value=_show(value, 200), into=into)
+    _fire_var(run, state, var=name, op="pop", value=value, into=into)
     return 0
 
 
@@ -537,8 +601,11 @@ def _parser() -> argparse.ArgumentParser:
     sp = add("go", _cmd_go, "move along an edge")
     sp.add_argument("state", nargs="?")
     sp.add_argument("-m", "--reason")
+    sp.add_argument("--user", metavar="ANSWER", help="the user's answer, for an exit that asks")
     sp = add("jump", _cmd_jump, "move to any state, bypassing edges")
     sp.add_argument("state")
+    sp.add_argument("-m", "--reason", required=True)
+    sp = add("block", _cmd_block, "record that the run is stopped on BLOCKED.md")
     sp.add_argument("-m", "--reason", required=True)
     sp = add("new", _cmd_new, "create a dated directory for a new machine")
     sp.add_argument("slug")

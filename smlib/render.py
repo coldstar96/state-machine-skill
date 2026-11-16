@@ -16,8 +16,15 @@ def _walk(g: Graph) -> list[str]:
     return order
 
 
-def _gear(e: dict, full: bool) -> str:
-    return f"⚙ {e['check']}" if full else "⚙"
+def _header(g: Graph, full: bool) -> list[str]:
+    hooks = [f"{k}={v}" for k, v in g.attrs.items() if k.startswith("on_")]
+    return [g.name] + ([f"hooks: {' · '.join(hooks)}"] if full and hooks else [])
+
+
+def _marks(e: dict, full: bool) -> str:
+    gear = [f"⚙ {e['check']}" if full else "⚙"] if e["check"] else []
+    ask = [f'👤 "{e["ask"]}"' if full else "👤"] if e["ask"] else []
+    return "  ".join(gear + ask)
 
 
 def outline(g: Graph, current: str | None = None, full: bool = False) -> str:
@@ -26,7 +33,7 @@ def outline(g: Graph, current: str | None = None, full: bool = False) -> str:
     ids = max([len(s) for s in g.states()] + [len(e["dst"]) for e in g.edges] + [0])
     labels = max([len(g.label(s)) for s in g.states()] + [0])
     listed: set[str] = set()
-    lines = [g.name]
+    lines = _header(g, full)
 
     def block(state: str) -> None:
         listed.add(state)
@@ -44,8 +51,8 @@ def outline(g: Graph, current: str | None = None, full: bool = False) -> str:
             line = f"      {tree}─{arrow} {e['dst']:<{ids}}"
             if e["label"]:
                 line += f"  {e['label']}"
-            if e["check"]:
-                line += f"  {_gear(e, full)}"
+            if _marks(e, full):
+                line += f"  {_marks(e, full)}"
             lines.append(line.rstrip())
 
     for s in reached:
@@ -135,7 +142,7 @@ def pseudocode(g: Graph, current: str | None = None, full: bool = False) -> str:
         else:
             merge[x].append(y)
 
-    lines = [g.name]
+    lines = _header(g, full)
 
     def state_line(s: str, indent: int) -> str:
         line = f"{' ' * indent}{'@' + s + ':':<{ids + 2}}"
@@ -153,11 +160,12 @@ def pseudocode(g: Graph, current: str | None = None, full: bool = False) -> str:
             lines.append(f"{' ' * (indent + 4)}· {g.detail(s)}")
 
     def prefix(e: dict, many: bool) -> str:
-        if not (e["label"] or e["check"] or many):
+        marks = _marks(e, full)
+        if not (e["label"] or marks or many):
             return ""
-        if not e["label"] and e["check"]:
-            return f"IF {_gear(e, full)}"
-        return f"IF ({e['label'] or 'no condition'})" + (f"  {_gear(e, full)}" if e["check"] else "")
+        if not e["label"] and marks:
+            return f"IF {marks}"
+        return f"IF ({e['label'] or 'no condition'})" + (f"  {marks}" if marks else "")
 
     def seq(x: str) -> list[tuple[str, bool]]:
         if x in body:

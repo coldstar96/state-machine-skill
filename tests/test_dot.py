@@ -54,3 +54,15 @@ class DotTests(unittest.TestCase):
             parse('digraph g {\n edge [check="true"];\n a -> b;\n}')
         g = parse('digraph g { node [fontname="Helvetica"]; edge [color=gray]; a -> b; }')
         self.assertEqual(g.edges[0]["dst"], "b")
+
+    def test_graph_attributes_in_both_forms(self):
+        g = parse('digraph g { graph [on_finish="a b", rankdir=LR]; on_move="c"; node [color=red]; a -> b; }')
+        self.assertEqual(g.attrs, {"on_finish": "a b", "rankdir": "LR", "on_move": "c"})
+        self.assertEqual(parse("digraph g { a -> b; }").attrs, {})
+
+    def test_ask_is_parsed_and_defaults_cannot_carry_it_or_hooks(self):
+        g = parse('digraph g { a -> b [ask="Ship it?"]; b -> c; c -> d [ask=""]; }')
+        self.assertEqual([(e["ask"], e["ask_set"]) for e in g.edges], [("Ship it?", True), ("", False), ("", True)])
+        for bad, word in (('edge [ask="x"]', "ask"), ('node [on_move="x"]', "on_move"), ('edge [on_var="x"]', "on_var")):
+            with self.assertRaisesRegex(ValueError, rf"^line 2: {word} is not supported"):
+                parse(f"digraph g {{\n {bad};\n a -> b;\n}}")

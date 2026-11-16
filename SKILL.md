@@ -35,12 +35,13 @@ digraph fix_bug {
 - Every exit of a branching state has a `label`, its condition.
 - Every condition a command can decide has `check="<command>"` (exit 0 allows the move). Only conditions that need judgment go without one.
 - Every deliverable the user named has a state.
+- `ask="<question>"` on an exit makes it wait for the user. Add it only when the user wants a checkpoint there; exits without it stay automatic.
 
 **Given a machine.** When the user names a stored machine (a directory or a `.dot` file), run `sm new <slug> --from <path>` instead of drafting, then go to §2. Never `init` or edit the stored machine: edits during the run go to the copy, and copying them back is the user's call.
 
 ## 2. Present
 
-Run `sm validate <dir>`, then `sm show <dir>` (names and conditions only; `sm show --full <dir>` adds each state's `do` text and the check commands). Present the machine as one block, every line filled in. When the machine has checks or `do` text, show `sm show --full` too, so the user approves the commands `sm go` will run:
+Run `sm validate <dir>`, then `sm show <dir>` (names and conditions only; `sm show --full <dir>` adds each state's `do` text and the check commands). Present the machine as one block, every line filled in. When the machine has checks, hooks or `do` text, show `sm show --full` too, so the user approves the commands `sm go` and the hooks will run:
 
 ```
 <the machine, exactly as `sm show` printed it>
@@ -62,6 +63,8 @@ Wait for the go-ahead. After any edit, validate and show again. If the user said
 2. Do that instruction. Only that.
 3. `sm go [state] [-m "why this exit"]` moves and prints the next `now`.
 
+An exit marked `asks user` (`ask="<question>"` in the DOT) is refused until the user has answered: put the question to the user verbatim (AskUserQuestion, the exits' labels as options), then `sm go <state> [-m "why"] --user "<their answer>"` with the answer verbatim. Never invent or paraphrase an answer. If the user is away, write `BLOCKED.md`, run `sm block -m "waiting for: <question>"` and stop. `sm jump` skips checks and ask gates: use it only when the user directs it.
+
 After a compaction or in a new session, run `sm now` first (`sm use <dir>` if there is no active machine).
 
 ## When it does not fit: stop
@@ -80,7 +83,8 @@ Stop when a check cannot be made to pass, the task needs work no state covers, a
    +  release [label="Release", do="Bump VERSION and add the release note"];
    ```
    ````
-3. End your turn with that report.
+3. If you wrote `BLOCKED.md`, run `sm block -m "<one line: why>"`: it logs the stop and fires the `on_blocked` hook.
+4. End your turn with that report.
 
 "Don't ask", "just finish" and "we're late" change none of this. They mean report instead of ask.
 
@@ -105,7 +109,7 @@ Variables hold what you must not lose on a context reset: the item you are on, w
 - A check sees `$name`, and `$name_len` for a list. Write `"${name_len:-0}"`: the count is unset until the list exists. Quote variables in a check; never paste a value into one.
 - Quote every value in your own shell (`sm set item "$f"`, `sm init <dir> --set item="$f"`). Put `--` before a value that may start with `-`.
 - Names: lowercase letters, digits, `_`; not ending in `_len` or `_proxy`; not `npm_config_*`.
-- Keep variables small: they become environment variables. Never store secrets: values are plain text in `state.json` and the history, shown by `sm now` and passed to `on_move`.
+- Keep variables small: they become environment variables. Never store secrets: values are plain text in `state.json` and the history, shown by `sm now` and passed to hooks.
 
 A loop over a queue (`sm push queue a b c` before it starts):
 
@@ -147,14 +151,29 @@ At a final state, report the result and the path taken (`sm log`). "Where are we
 
 ## Configure
 
-`sm config` shows the settings file and its values; `sm config <key> <value>` sets one (an empty value removes it). Change settings only when the user asks to set the skill up for their workflow. Show the user the exact `on_move` command before setting it.
+`sm config` shows the settings file and its values; `sm config <key> <value>` sets one (an empty value removes it). Change settings only when the user asks to set the skill up for their workflow. Show the user the exact hook command before setting it, and never add hooks unless the user asks.
 
 - `dir`: where `sm new` creates machine directories.
-- `on_move`: a shell command run after every state change, with `SM_STATE`, `SM_MACHINE`, `SM_DIR` and `SM_STEP` set, for example to update a status line.
 - `view`: `pseudocode` (default) or `outline`; what `sm show` prints. `--outline` / `--pseudocode` override it for one call.
 - `detail`: `short` (default) or `full`; whether `sm show` includes check commands and `do` text. `--full` / `--short` override it for one call.
 - `label_max`: positive integer, default 40; a longer label draws a lint note to move the detail into `do=`.
 
+### Hooks
+
+One key per event, each a shell command: `sm config on_<event> '<cmd>'` for all machines, or `graph [on_<event>="<cmd>"]` in one machine.dot (the bare `on_<event>="<cmd>";` form works too). Both set: the global one runs first, then the machine's. A hook runs synchronously in the run directory, up to 10 s; its output is discarded and a failure never affects the run. A hook that runs `sm` does not fire further hooks. Every hook gets `SM_EVENT`, `SM_STATE`, `SM_MACHINE`, `SM_DIR`, `SM_STEP` and the run's variables, plus:
+
+| Key | Fires | Extra env |
+|---|---|---|
+| `on_move` | after `go`/`jump`/`init` enter a state | `SM_FROM` (empty on init), `SM_REASON`, `SM_KIND` (go/jump/init), `SM_FINAL` (1/0) |
+| `on_finish` | after a move into a final state, after `on_move` | same as `on_move` |
+| `on_check_fail` | `sm go` refused by a failing check | `SM_TO`, `SM_CHECK`, `SM_EXIT` |
+| `on_ask` | `sm go` refused because the exit needs the user | `SM_TO`, `SM_QUESTION` |
+| `on_blocked` | `sm block` | `SM_REASON`, `SM_BLOCKED` (path of BLOCKED.md) |
+| `on_edit` | `sm` notices `machine.dot` changed mid-run | `SM_CHANGES` (change lines) |
+| `on_var` | after `set`/`push`/`pop` | `SM_VAR`, `SM_OP`, `SM_VALUE`, and `SM_INTO` for pop |
+
+A machine's hooks are shell from the DOT, the same trust as `check=`: `sm show --full` prints them, and the Present step shows them. A misspelt `on_*` graph attribute is a lint error.
+
 ## Commands
 
-`validate`, `show` (`--outline`/`--pseudocode`, `--full`/`--short`), `png`, `new`, `config`, `init`, `use`, `now`, `go`, `jump`, `set`, `push`, `pop`, `get`, `finished`, `log`. `sm <command> --help` gives the flags. `jump` is for a user-directed reposition only.
+`validate`, `show` (`--outline`/`--pseudocode`, `--full`/`--short`), `png`, `new`, `config`, `init`, `use`, `now`, `go` (`--user`), `block`, `jump`, `set`, `push`, `pop`, `get`, `finished`, `log`. `sm <command> --help` gives the flags. `jump` is for a user-directed reposition only.
