@@ -30,10 +30,10 @@ digraph fix_bug {
   __start__ [shape=point];
   __start__ -> reproduce;
 
-  reproduce [label="Reproduce the bug with a failing test"];
-  fix       [label="Apply the minimal fix"];
-  verify    [label="Run the full suite"];
-  done      [label="Report the result", shape=doublecircle];
+  reproduce [label="Reproduce", do="Reproduce the bug with a failing test"];
+  fix       [label="Fix", do="Apply the minimal fix"];
+  verify    [label="Verify", do="Run the full suite"];
+  done      [label="Done", do="Report the result", shape=doublecircle];
 
   reproduce -> fix;
   fix       -> verify;
@@ -46,16 +46,16 @@ digraph fix_bug {
 
 ```
 fix_bug
-  @reproduce:  "Reproduce the bug with a failing test"
+  @reproduce:  "Reproduce"
   LOOP
-    @fix:        "Apply the minimal fix"
-    @verify:     "Run the full suite"
-      IF (suite green)  ⚙ npm test  BREAK
+    @fix:        "Fix"
+    @verify:     "Verify"
+      IF (suite green)  ⚙  BREAK
       IF (suite red)  CONTINUE
-  @done:       "Report the result"  END
+  @done:       "Done"  END
 ```
 
-`LOOP` repeats its body; `BREAK` jumps to the first line after the loop, `CONTINUE` back to its top; `GOTO @x` jumps to the state labeled `@x:`. Quoted text is the state's instruction, `( )` holds the condition for a move, and `⚙` is the check command that must pass; `END` marks a final state.
+`LOOP` repeats its body; `BREAK` jumps to the first line after the loop, `CONTINUE` back to its top; `GOTO @x` jumps to the state labeled `@x:`. Quoted text is the state's `label`, `( )` holds the condition for a move, and `⚙` marks a check that must pass; `END` marks a final state. `sm show --full` adds each state's `do` text under it and prints the check command after `⚙`.
 
 `sm png` draws the same machine with Graphviz, with the current state filled in (here the run is at `verify`):
 
@@ -64,7 +64,8 @@ fix_bug
 Every move prints where the agent now is:
 
 ```
-[fix_bug] fix · step 1 · visit 1 — Apply the minimal fix
+[fix_bug] fix · step 1 · visit 1 — Fix
+do: Apply the minimal fix
 exits: verify
 rule: only this state's work; if it does not fit, stop and report (BLOCKED.md), no jump, no graph edits
 ```
@@ -75,7 +76,7 @@ You can change the machine at any time, also in the middle of a run: edit `machi
 
 A restricted subset of DOT:
 
-- A state is a node; its `label` is the instruction for that state.
+- A state is a node; its `label` is a short name (1-4 words) shown in drawings. The optional `do="..."` holds the full instruction; `sm now` and `sm show --full` print it. Without `do`, the label is the instruction.
 - The entry is one `shape=point` node with a single edge to the first state.
 - A final state has `shape=doublecircle`. A machine with no final state runs until stopped.
 - An edge `label` is the condition for taking it. Every exit of a state with more than one exit needs one.
@@ -89,7 +90,7 @@ A restricted subset of DOT:
 |---|---|
 | `sm new <slug> [--from <path>]` | Create a dated directory for a new machine and print its path; `--from` copies a stored machine's `machine.dot` into it |
 | `sm validate [dir]` | Parse and check the machine |
-| `sm show [dir]` | Print the machine as pseudocode, with the current state marked (`--outline` for the tree view) |
+| `sm show [--outline\|--pseudocode] [--full\|--short] [dir]` | Print the machine with the current state marked: pseudocode or the tree view; `--full` adds `do` text and check commands |
 | `sm png [dir]` | Draw the machine with Graphviz |
 | `sm init <dir> --cwd <dir> [--set name=value]` | Start a run, optionally with variables set |
 | `sm use <dir>` | Point this session at an existing run |
@@ -106,7 +107,7 @@ A restricted subset of DOT:
 
 `SM_RUN=<dir>` points a single `sm` call at that run, without changing the session's active machine.
 
-A run can hold variables. `{name}` in a state's label is filled in when it is printed, and a check sees each variable as `$name`. Values are plain text in `state.json` and the history, so do not store secrets.
+A run can hold variables. `{name}` in a state's label or `do` is filled in when it is printed, and a check sees each variable as `$name`. Values are plain text in `state.json` and the history, so do not store secrets.
 
 ## Configure
 
@@ -116,6 +117,9 @@ Settings live in `config.json` under `SM_HOME` (default `~/.claude/state-machine
 |---|---|---|
 | `dir` | Where `sm new` creates machine directories | `SM_HOME` |
 | `on_move` | Shell command run after every state change | none |
+| `view` | What `sm show` prints: `pseudocode` or `outline` (flags `--outline`, `--pseudocode` override) | `pseudocode` |
+| `detail` | `short` or `full`: whether `sm show` includes `do` text and check commands (flags `--full`, `--short` override) | `short` |
+| `label_max` | Positive integer: a longer label draws a lint note to move the detail into `do=` | `40` |
 
 `on_move` runs in the machine directory with `SM_STATE`, `SM_MACHINE`, `SM_DIR` and `SM_STEP` set. Its output is discarded, it is stopped after 10 seconds, and a failure never affects the move. For example, to keep the current state in a file a status line can read:
 

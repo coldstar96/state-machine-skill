@@ -3,7 +3,7 @@ from __future__ import annotations
 from smlib.dot import Graph
 
 
-def lint(g: Graph) -> tuple[list[str], list[str]]:
+def lint(g: Graph, label_max: int = 40) -> tuple[list[str], list[str]]:
     errors: list[str] = []
     entries = g.entries()
     if len(entries) != 1:
@@ -43,6 +43,9 @@ def lint(g: Graph) -> tuple[list[str], list[str]]:
                     errors.append(f"edge {s} -> {e['dst']} (line {e['line']}): no condition label; {s} has {len(exits)} exits")
 
     notes: list[str] = []
+    for s in g.states():
+        if len(g.label(s)) > label_max:
+            notes.append(f"state {s}: label is {len(g.label(s))} chars; keep it short, put detail in do=")
     start = g.initial()
     if start is not None:
         reach, todo = {start}, [start]

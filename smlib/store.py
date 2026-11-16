@@ -26,6 +26,7 @@ def changes(old: Graph, new: Graph) -> list[str]:
     out += [f"+edge {a}->{b}" for a, b in ne if (a, b) not in oe]
     out += [f"-edge {a}->{b}" for a, b in oe if (a, b) not in ne]
     out += [f"{s}: label changed" for s in both if old.label(s) != new.label(s)]
+    out += [f"{s}: do changed" for s in both if old.detail(s) != new.detail(s)]
     out += [f"{s}: final changed" for s in both if old.is_final(s) != new.is_final(s)]
     out += [f"{a}->{b}: label changed" for a, b in both_e if oe[a, b].get("label") != ne[a, b].get("label")]
     out += [f"{a}->{b}: check changed" for a, b in both_e if oe[a, b].get("check") != ne[a, b].get("check")]
@@ -34,7 +35,7 @@ def changes(old: Graph, new: Graph) -> list[str]:
     return out
 
 
-CONFIG_KEYS = ("dir", "on_move")
+CONFIG_KEYS = ("dir", "on_move", "view", "detail", "label_max")
 
 
 def home() -> Path:

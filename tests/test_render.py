@@ -14,10 +14,13 @@ def read(name):
 NESTED = ("digraph g { s [shape=point]; s -> a; a [label=A]; b [label=B]; c [label=C]; d [label=D, shape=doublecircle];"
           " a -> b; b -> b [label=retry]; b -> c [label=ok]; c -> a [label=more]; c -> d [label=none]; }")
 
+DO = ('digraph g { s [shape=point]; s -> a; a [label=A, do="Do the\\nthing"]; b [label=B, shape=doublecircle];'
+      ' u [label=U, do="orphan work"]; a -> b; u -> b; }')
+
 
 class RenderTests(unittest.TestCase):
     def test_outline_matches_the_spec_sketch(self):
-        out = outline(parse(read("loop.dot")), "diagnose")
+        out = outline(parse(read("loop.dot")), "diagnose", full=True)
         lines = out.splitlines()
         self.assertEqual(lines[0], "fix_bug")
         self.assertRegex(out, r"● diagnose\s+Find the root cause; no fix yet\s+◀ current")
@@ -26,6 +29,28 @@ class RenderTests(unittest.TestCase):
         self.assertRegex(out, r"└─↩ fix\s+suite red")
         self.assertRegex(out, r"◎ done\s+Report the result")
         self.assertEqual(out.count("◀ current"), 1)
+
+    def test_default_views_show_a_bare_gear_and_no_do_text(self):
+        g = parse(read("loop.dot"))
+        self.assertRegex(outline(g), r"├─▶ done\s+suite green\s+⚙\n")
+        self.assertNotIn("npm test", outline(g))
+        self.assertIn("IF (suite green)  ⚙  BREAK", pseudocode(g))
+        self.assertNotIn("npm test", pseudocode(g))
+        bare = parse('digraph m { s [shape=point]; s -> a; a [label=A]; b [label=B]; a -> b [check="test -f x"]; }')
+        self.assertIn("IF ⚙  GOTO @b", pseudocode(bare))
+        self.assertRegex(outline(bare), r"└─▶ b\s+⚙(\n|$)")
+        self.assertNotIn("test -f x", outline(bare))
+
+    def test_do_text_shows_only_with_full_including_unreachable_states(self):
+        g = parse(DO)
+        self.assertNotIn("·", outline(g))
+        self.assertNotIn("·", pseudocode(g))
+        o = outline(g, full=True)
+        self.assertIn("\n      · Do the thing\n", o)
+        self.assertIn("\n      · orphan work\n", o + "\n")
+        p = pseudocode(g, full=True)
+        self.assertIn('  @a:  "A"\n      · Do the thing\n', p)
+        self.assertIn('  @u:  "U"\n      · orphan work', p)
 
     def test_cycle_outline_terminates(self):
         out = outline(parse(read("cycle.dot")))
@@ -50,7 +75,7 @@ class RenderTests(unittest.TestCase):
         self.assertEqual(spaced("digraph g { nodesep=0.1; }"), "digraph g { nodesep=1.2; nodesep=0.1; }")
 
     def test_pseudo_loop_golden(self):
-        self.assertEqual(pseudocode(parse(read("loop.dot")), "diagnose"), "\n".join([
+        self.assertEqual(pseudocode(parse(read("loop.dot")), "diagnose", full=True), "\n".join([
             "fix_bug",
             '  @reproduce:  "Reproduce the bug with a failing test"',
             "    IF (test fails for the right reason)  GOTO @diagnose",
@@ -146,7 +171,7 @@ class RenderTests(unittest.TestCase):
         out = pseudocode(parse("digraph g { s [shape=point]; s -> a; a [label=A]; b [label=B]; c [label=C];"
                                " a -> b; a -> c [label=y]; }"))
         self.assertIn("IF (no condition)", out)
-        out = pseudocode(parse('digraph m { s [shape=point]; s -> a; a [label=A]; b [label=B]; a -> b [check="test -f x"]; }'))
+        out = pseudocode(parse('digraph m { s [shape=point]; s -> a; a [label=A]; b [label=B]; a -> b [check="test -f x"]; }'), full=True)
         self.assertIn("IF ⚙ test -f x  GOTO @b", out)
         self.assertNotIn("(no condition)", out)
         out = pseudocode(parse('digraph g { s [shape=point]; s -> a; a; b [label="say \\"hi\\""]; a -> b; }'))

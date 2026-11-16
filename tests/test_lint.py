@@ -33,3 +33,12 @@ class LintTests(unittest.TestCase):
         for word, src in cases.items():
             errors, _ = lint(parse(src))
             self.assertTrue(any(word in e for e in errors), (word, errors))
+
+    def test_long_label_is_a_note_not_an_error(self):
+        def dot(label):
+            return f'digraph g {{ s [shape=point]; s -> a; a [label="{label}", shape=doublecircle]; }}'
+        self.assertEqual(lint(parse(dot("x" * 40))), ([], []))
+        self.assertEqual(lint(parse(dot("x" * 41))),
+                         ([], ["state a: label is 41 chars; keep it short, put detail in do="]))
+        self.assertEqual(lint(parse(dot("x" * 11)), label_max=10)[1],
+                         ["state a: label is 11 chars; keep it short, put detail in do="])

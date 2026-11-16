@@ -280,6 +280,19 @@ class CliTests(unittest.TestCase):
         self.assertEqual(self.sm("go")[0], 0)
         self.assertIn("edit at step 1", self.sm("log")[1])
 
+    def test_do_reaches_the_banner_filled_and_a_mid_run_edit_notifies(self):
+        self.start("chain.dot", edit=lambda t: t.replace('label="First"', 'label="First", do="Fix {item}\\nnow"'))
+        self.sm("set", "item", "x")
+        out = self.sm("now")[1].splitlines()
+        self.assertIn("— First", out[0])
+        self.assertEqual(out[1], "do: Fix x now")
+        self.assertTrue(out[2].startswith("vars:"))
+        self.rewrite(lambda t: t.replace("Fix {item}", "Mend {item}"))
+        code, out = self.sm("go")
+        self.assertEqual(code, 1)
+        self.assertIn("machine changed at step 0: a: do changed", out)
+        self.assertEqual(self.sm("go")[0], 0)
+
     def test_invalid_edit_blocks_moves_but_not_show(self):
         self.start("loop.dot")
         self.rewrite(lambda t: t.replace("diagnose  -> fix;", ""))
@@ -344,7 +357,10 @@ class CliTests(unittest.TestCase):
     def test_show_and_png_before_start(self):
         d = self.copy_fixture("loop.dot")
         self.assertIn("  LOOP\n", self.sm("show", d)[1])
-        self.assertIn("IF (suite green)  ⚙ npm test  BREAK", self.sm("show", d)[1])
+        self.assertIn("IF (suite green)  ⚙  BREAK", self.sm("show", d)[1])
+        self.assertNotIn("npm test", self.sm("show", d)[1])
+        self.assertIn("IF (suite green)  ⚙ npm test  BREAK", self.sm("show", "--full", d)[1])
+        self.assertRegex(self.sm("show", "--outline", "--full", d)[1], r"suite green\s+⚙ npm test")
         self.assertIn("○ reproduce", self.sm("show", "--outline", d)[1])
         self.assertEqual(self.sm("validate", d)[0], 0)
         link = self.tmp / "sm_link.py"
@@ -405,6 +421,50 @@ class CliTests(unittest.TestCase):
         code, out = self.sm("config")
         self.assertEqual(code, 1)
         self.assertIn("config.json:", out)
+
+    def test_config_validates_view_detail_label_max_and_lists_every_key(self):
+        for key, bad in (("view", "table"), ("detail", "long"), ("label_max", "0"), ("label_max", "ten")):
+            code, out = self.sm("config", key, bad)
+            self.assertEqual(code, 1)
+            self.assertIn(f"bad value '{bad}' for {key}; expected ", out)
+        out = self.sm("config")[1]
+        for key in ("view", "detail", "label_max"):
+            self.assertIn(f"{key} = (not set)", out)
+        for key, good in (("view", "outline"), ("detail", "full"), ("label_max", "25")):
+            self.assertEqual(self.sm("config", key, good)[0], 0)
+            self.assertIn(f"{key} = {good}", self.sm("config")[1])
+        self.sm("config", "view", "")
+        self.assertIn("view = (not set)", self.sm("config")[1])
+
+    def test_settings_pick_the_default_show_and_flags_override(self):
+        d = self.copy_fixture("loop.dot")
+        self.sm("config", "view", "outline")
+        self.assertIn("○ reproduce", self.sm("show", d)[1])
+        self.assertIn("  LOOP\n", self.sm("show", "--pseudocode", d)[1])
+        self.sm("config", "view", "pseudocode")
+        self.sm("config", "detail", "full")
+        self.assertIn("⚙ npm test", self.sm("show", d)[1])
+        self.assertNotIn("npm test", self.sm("show", "--short", d)[1])
+        self.assertIn("⚙ npm test", self.sm("show", "--outline", d)[1])
+        self.assertEqual(self.sm("show", "--outline", "--pseudocode", d)[0], 2)
+        self.assertEqual(self.sm("show", "--full", "--short", d)[0], 2)
+
+    def test_label_max_setting_sets_the_lint_note(self):
+        d = self.copy_fixture("chain.dot", edit=lambda t: t.replace('"Second"', '"Second one"'))
+        self.assertEqual(self.sm("validate", d)[1].count("note:"), 0)
+        self.sm("config", "label_max", "10")
+        self.assertNotIn("note:", self.sm("validate", d)[1])
+        self.sm("config", "label_max", "9")
+        code, out = self.sm("validate", d)
+        self.assertEqual(code, 0)
+        self.assertIn("note: state b: label is 10 chars; keep it short, put detail in do=", out)
+
+    def test_show_survives_a_corrupt_config(self):
+        d = self.copy_fixture("chain.dot")
+        (self.tmp / "config.json").write_text("{nope")
+        code, out = self.sm("show", d)
+        self.assertEqual(code, 0)
+        self.assertIn('@a:', out)
 
     def test_on_move_gets_the_state_and_never_blocks(self):
         self.sm("config", "on_move",

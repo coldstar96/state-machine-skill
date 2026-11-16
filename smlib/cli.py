@@ -54,12 +54,27 @@ def _read(run: Run) -> str:
         raise ValueError(f"no machine.dot in {run.dir}")
 
 
+def _settings() -> dict[str, str]:
+    # a broken config.json must not stop reading or drawing a machine
+    try:
+        return load_config()
+    except ValueError:
+        return {}
+
+
+def _label_max() -> int:
+    try:
+        return int(_settings().get("label_max", 40))
+    except ValueError:
+        return 40
+
+
 def _parse_lint(text: str) -> tuple[Graph | None, list[str], list[str]]:
     try:
         g = parse(text)
     except ValueError as e:
         return None, [str(e)], []
-    errors, notes = lint(g)
+    errors, notes = lint(g, _label_max())
     return g, errors, notes
 
 
@@ -147,6 +162,8 @@ def _where(g: Graph, state: dict) -> str:
     vs = _vars(state)
     head = (f"[{g.name}] {cur} · step {state['steps']} · visit {state['visits'].get(cur, 0)}"
             f" — {_fill(g.label(cur), vs)}")
+    if g.detail(cur):
+        head += "\ndo: " + _fill(g.detail(cur), vs)
     if vs:
         shown = " · ".join(f"{k}={_show(v)}" for k, v in list(vs.items())[:8])
         head += "\nvars: " + shown + (f" · +{len(vs) - 8} more" if len(vs) > 8 else "")
@@ -233,7 +250,9 @@ def _cmd_show(args) -> int:
     if g is None:
         return 1
     cur = state["current"] if state else None
-    print(outline(g, cur) if args.outline else pseudocode(g, cur))
+    cfg = _settings()
+    view, detail = args.view or cfg.get("view"), args.detail or cfg.get("detail")
+    print((outline if view == "outline" else pseudocode)(g, cur, detail == "full"))
     return 0
 
 
@@ -333,18 +352,27 @@ def _base(cfg: dict[str, str]) -> Path:
     return Path(cfg.get("dir") or home()).expanduser().resolve()
 
 
+_ALLOWED = {"view": (r"pseudocode|outline", "pseudocode or outline"),
+            "detail": (r"short|full", "short or full"),
+            "label_max": (r"[1-9][0-9]*", "a positive integer")}
+
+
 def _cmd_config(args) -> int:
     cfg = load_config()
     if args.key is None:
         print(home() / "config.json")
         print(f"dir = {_base(cfg)}")
-        print(f"on_move = {cfg.get('on_move') or '(not set)'}")
+        for key in CONFIG_KEYS[1:]:
+            print(f"{key} = {cfg.get(key) or '(not set)'}")
         return 0
     if args.value is None:
         print("usage: sm config [<key> <value>]", file=sys.stderr)
         return 2
     if args.key not in CONFIG_KEYS:
         raise ValueError(f"unknown key '{args.key}'; keys: {', '.join(CONFIG_KEYS)}")
+    allowed = _ALLOWED.get(args.key)
+    if args.value and allowed and not re.fullmatch(allowed[0], args.value):
+        raise ValueError(f"bad value '{args.value}' for {args.key}; expected {allowed[1]}")
     if args.value:
         cfg[args.key] = args.value
     else:
@@ -488,7 +516,14 @@ def _parser() -> argparse.ArgumentParser:
 
     add("validate", _cmd_validate, "parse and lint the machine").add_argument("dir", nargs="?")
     sp = add("show", _cmd_show, "pseudocode view, current state marked")
-    sp.add_argument("--outline", action="store_true", help="ASCII outline instead of pseudocode")
+    views = sp.add_mutually_exclusive_group()
+    views.add_argument("--outline", dest="view", action="store_const", const="outline",
+                       help="ASCII outline instead of pseudocode")
+    views.add_argument("--pseudocode", dest="view", action="store_const", const="pseudocode")
+    detail = sp.add_mutually_exclusive_group()
+    detail.add_argument("--full", dest="detail", action="store_const", const="full",
+                        help="include check commands and do text")
+    detail.add_argument("--short", dest="detail", action="store_const", const="short")
     sp.add_argument("dir", nargs="?")
     sp = add("png", _cmd_png, "render with Graphviz")
     sp.add_argument("dir", nargs="?")

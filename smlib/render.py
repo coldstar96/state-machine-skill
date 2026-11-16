@@ -16,7 +16,11 @@ def _walk(g: Graph) -> list[str]:
     return order
 
 
-def outline(g: Graph, current: str | None = None) -> str:
+def _gear(e: dict, full: bool) -> str:
+    return f"⚙ {e['check']}" if full else "⚙"
+
+
+def outline(g: Graph, current: str | None = None, full: bool = False) -> str:
     reached = [s for s in _walk(g) if s in g.states()]
     rest = [s for s in g.states() if s not in reached]
     ids = max([len(s) for s in g.states()] + [len(e["dst"]) for e in g.edges] + [0])
@@ -31,6 +35,8 @@ def outline(g: Graph, current: str | None = None) -> str:
         if state == current:
             line += "  ◀ current"
         lines.append(line.rstrip())
+        if full and g.detail(state):
+            lines.append(f"      · {g.detail(state)}")
         exits = g.exits(state)
         for i, e in enumerate(exits):
             tree = "└" if i == len(exits) - 1 else "├"
@@ -39,7 +45,7 @@ def outline(g: Graph, current: str | None = None) -> str:
             if e["label"]:
                 line += f"  {e['label']}"
             if e["check"]:
-                line += f"  ⚙ {e['check']}"
+                line += f"  {_gear(e, full)}"
             lines.append(line.rstrip())
 
     for s in reached:
@@ -51,7 +57,7 @@ def outline(g: Graph, current: str | None = None) -> str:
     return "\n".join(lines)
 
 
-def pseudocode(g: Graph, current: str | None = None) -> str:
+def pseudocode(g: Graph, current: str | None = None, full: bool = False) -> str:
     states = g.states()
     ids = max([len(s) for s in states] + [0])
     succ = {s: [e["dst"] for e in g.exits(s) if e["dst"] in states] for s in states}
@@ -141,12 +147,17 @@ def pseudocode(g: Graph, current: str | None = None) -> str:
             line += "  ◀ current"
         return line.rstrip()
 
+    def put_state(s: str, indent: int) -> None:
+        lines.append(state_line(s, indent))
+        if full and g.detail(s):
+            lines.append(f"{' ' * (indent + 4)}· {g.detail(s)}")
+
     def prefix(e: dict, many: bool) -> str:
         if not (e["label"] or e["check"] or many):
             return ""
         if not e["label"] and e["check"]:
-            return f"IF ⚙ {e['check']}"
-        return f"IF ({e['label'] or 'no condition'})" + (f"  ⚙ {e['check']}" if e["check"] else "")
+            return f"IF {_gear(e, full)}"
+        return f"IF ({e['label'] or 'no condition'})" + (f"  {_gear(e, full)}" if e["check"] else "")
 
     def seq(x: str) -> list[tuple[str, bool]]:
         if x in body:
@@ -168,7 +179,7 @@ def pseudocode(g: Graph, current: str | None = None) -> str:
                 block(x, indent, nxt, top and i == len(entries) - 1)
 
     def block(x: str, indent: int, nxt: str | None, last: bool) -> None:
-        lines.append(state_line(x, indent))
+        put_state(x, indent)
         ex = g.exits(x)
         loops = loops_of(x)
         inner = loops[-1] if loops else None
@@ -197,7 +208,7 @@ def pseudocode(g: Graph, current: str | None = None) -> str:
     if rest:
         lines.append("-- unreachable --")
         for s in rest:
-            lines.append(state_line(s, 2))
+            put_state(s, 2)
             ex = g.exits(s)
             for e in ex:
                 pre = prefix(e, len(ex) > 1)

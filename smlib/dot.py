@@ -31,6 +31,9 @@ class Graph:
     def label(self, state: str) -> str:
         return self.nodes.get(state, {}).get("label", "").replace("\\n", " ")
 
+    def detail(self, state: str) -> str:
+        return self.nodes.get(state, {}).get("do", "").replace("\\n", " ")
+
     def is_final(self, state: str) -> bool:
         return self.nodes.get(state, {}).get("shape") == "doublecircle"
 

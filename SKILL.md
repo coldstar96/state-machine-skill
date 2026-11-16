@@ -18,10 +18,10 @@ digraph fix_bug {
   __start__ [shape=point];
   __start__ -> reproduce;
 
-  reproduce [label="Reproduce the bug with a failing test"];
-  fix       [label="Apply the minimal fix"];
-  verify    [label="Run the full suite"];
-  done      [label="Report the result", shape=doublecircle];
+  reproduce [label="Reproduce", do="Reproduce the bug with a failing test"];
+  fix       [label="Fix", do="Apply the minimal fix"];
+  verify    [label="Verify", do="Run the full suite"];
+  done      [label="Done", do="Report the result", shape=doublecircle];
 
   reproduce -> fix;
   fix       -> verify;
@@ -30,7 +30,7 @@ digraph fix_bug {
 }
 ```
 
-- A state is a node id (letters, digits, underscores). Its `label` is the instruction for that state: a phase with a checkable outcome, not a single command.
+- A state is a node id (letters, digits, underscores). Its `label` is a short name (1-4 words) shown in drawings; `do="..."` holds the instruction for that state: a phase with a checkable outcome, not a single command. Edge labels are short conditions.
 - Entry: one `shape=point` node with one edge to the first state. Final: `shape=doublecircle`. No final state means it runs until stopped.
 - Every exit of a branching state has a `label`, its condition.
 - Every condition a command can decide has `check="<command>"` (exit 0 allows the move). Only conditions that need judgment go without one.
@@ -40,7 +40,7 @@ digraph fix_bug {
 
 ## 2. Present
 
-Run `sm validate <dir>`, then `sm show <dir>`. Present the machine as one block, every line filled in:
+Run `sm validate <dir>`, then `sm show <dir>` (names and conditions only; `sm show --full <dir>` adds each state's `do` text and the check commands). Present the machine as one block, every line filled in. When the machine has checks or `do` text, show `sm show --full` too, so the user approves the commands `sm go` will run:
 
 ```
 <the machine, exactly as `sm show` printed it>
@@ -58,7 +58,7 @@ Wait for the go-ahead. After any edit, validate and show again. If the user said
 
 `sm init <dir> --cwd <directory the checks run in>`, then repeat:
 
-1. `sm now` gives your state, its instruction and its exits.
+1. `sm now` gives your state, its `do` instruction (else its label) and its exits. `sm show --full` shows every state's detail.
 2. Do that instruction. Only that.
 3. `sm go [state] [-m "why this exit"]` moves and prints the next `now`.
 
@@ -77,7 +77,7 @@ Stop when a check cannot be made to pass, the task needs work no state covers, a
    Needs: <who or what unblocks it>
    Proposed machine change:
    ```diff
-   +  release [label="Bump VERSION and add the release note"];
+   +  release [label="Release", do="Bump VERSION and add the release note"];
    ```
    ````
 3. End your turn with that report.
@@ -87,7 +87,7 @@ Stop when a check cannot be made to pass, the task needs work no state covers, a
 | Thought | Reality |
 |---|---|
 | "The task says to do X once the suite is green, so I'll do it after `done`" | No state covers X. Stop before the final state and propose a state for X. |
-| "X fits loosely under this state" | A state's label is its whole scope. |
+| "X fits loosely under this state" | A state's label plus `do` is its whole scope. |
 | "I'll explain the blocker in my last message" | The user reads the machine directory later. Write `BLOCKED.md`. |
 | "This condition is obvious, it needs no check" | If a command can decide it, the command decides it. |
 
@@ -100,7 +100,7 @@ The user may edit `machine.dot` at any time, or tell you what to change (make ex
 Variables hold what you must not lose on a context reset: the item you are on, what is left, a result to hand on. They live in the run beside your position.
 
 - `sm set <name> <value>`. `sm push <name> <value>...` appends to a list. `sm pop <name> <into>` moves the first value into `<into>` (a queue); `--last` moves the last (a stack). `sm get <name>` prints a value, a list one per line; `sm get --run <dir> <name>` reads another run's. `sm log --vars` lists the changes.
-- `{name}` in a label is filled in when `sm now` prints it. A list shows its first three values.
+- `{name}` in a label or `do` is filled in when `sm now` prints it. A list shows its first three values.
 - `sm now` shortens a value to 60 characters. `sm get <name>` gives the full value: use it before acting on a long one.
 - A check sees `$name`, and `$name_len` for a list. Write `"${name_len:-0}"`: the count is unset until the list exists. Quote variables in a check; never paste a value into one.
 - Quote every value in your own shell (`sm set item "$f"`, `sm init <dir> --set item="$f"`). Put `--` before a value that may start with `-`.
@@ -110,9 +110,9 @@ Variables hold what you must not lose on a context reset: the item you are on, w
 A loop over a queue (`sm push queue a b c` before it starts):
 
 ```dot
-check   [label="Check the queue"];
-take    [label="Take the next file: sm pop queue item"];
-process [label="Fix {item}"];
+check   [label="Check queue"];
+take    [label="Take next", do="Take the next file: sm pop queue item"];
+process [label="Fix file", do="Fix {item}"];
 check   -> take [label="more left", check="test \"${queue_len:-0}\" -gt 0"];
 check   -> done [label="none left", check="test \"${queue_len:-0}\" -eq 0"];
 take    -> process;
@@ -143,7 +143,7 @@ Use it when one state holds a procedure big enough for its own machine. You driv
 
 ## Finish
 
-At a final state, report the result and the path taken (`sm log`). "Where are we?" is answered with `sm show`, or `sm png`.
+At a final state, report the result and the path taken (`sm log`). "Where are we?" is answered with `sm show` (add `--full` for the detail), or `sm png`.
 
 ## Configure
 
@@ -151,7 +151,10 @@ At a final state, report the result and the path taken (`sm log`). "Where are we
 
 - `dir`: where `sm new` creates machine directories.
 - `on_move`: a shell command run after every state change, with `SM_STATE`, `SM_MACHINE`, `SM_DIR` and `SM_STEP` set, for example to update a status line.
+- `view`: `pseudocode` (default) or `outline`; what `sm show` prints. `--outline` / `--pseudocode` override it for one call.
+- `detail`: `short` (default) or `full`; whether `sm show` includes check commands and `do` text. `--full` / `--short` override it for one call.
+- `label_max`: positive integer, default 40; a longer label draws a lint note to move the detail into `do=`.
 
 ## Commands
 
-`validate`, `show`, `png`, `new`, `config`, `init`, `use`, `now`, `go`, `jump`, `set`, `push`, `pop`, `get`, `finished`, `log`. `sm <command> --help` gives the flags. `jump` is for a user-directed reposition only.
+`validate`, `show` (`--outline`/`--pseudocode`, `--full`/`--short`), `png`, `new`, `config`, `init`, `use`, `now`, `go`, `jump`, `set`, `push`, `pop`, `get`, `finished`, `log`. `sm <command> --help` gives the flags. `jump` is for a user-directed reposition only.
