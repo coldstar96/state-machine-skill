@@ -46,16 +46,16 @@ digraph fix_bug {
 
 ```
 fix_bug
-  reproduce:  "Reproduce the bug with a failing test"
+  @reproduce:  "Reproduce the bug with a failing test"
   LOOP
-    fix:        "Apply the minimal fix"
-    verify:     "Run the full suite"
+    @fix:        "Apply the minimal fix"
+    @verify:     "Run the full suite"
       IF (suite green)  ⚙ npm test  BREAK
       IF (suite red)  CONTINUE
-  done:       "Report the result"  END
+  @done:       "Report the result"  END
 ```
 
-`LOOP` repeats its body; `BREAK` jumps to the first line after the loop, `CONTINUE` back to its top; `GOTO x` jumps to the state labeled `x:`. Quoted text is the state's instruction, `( )` holds the condition for a move, and `⚙` is the check command that must pass; `END` marks a final state.
+`LOOP` repeats its body; `BREAK` jumps to the first line after the loop, `CONTINUE` back to its top; `GOTO @x` jumps to the state labeled `@x:`. Quoted text is the state's instruction, `( )` holds the condition for a move, and `⚙` is the check command that must pass; `END` marks a final state.
 
 `sm png` draws the same machine with Graphviz, with the current state filled in (here the run is at `verify`):
 

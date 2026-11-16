@@ -52,48 +52,48 @@ class RenderTests(unittest.TestCase):
     def test_pseudo_loop_golden(self):
         self.assertEqual(pseudocode(parse(read("loop.dot")), "diagnose"), "\n".join([
             "fix_bug",
-            '  reproduce:  "Reproduce the bug with a failing test"',
-            "    IF (test fails for the right reason)  GOTO diagnose",
-            '  diagnose:   "Find the root cause; no fix yet"  ◀ current',
+            '  @reproduce:  "Reproduce the bug with a failing test"',
+            "    IF (test fails for the right reason)  GOTO @diagnose",
+            '  @diagnose:   "Find the root cause; no fix yet"  ◀ current',
             "  LOOP",
-            '    fix:        "Apply the minimal fix"',
-            '    verify:     "Run the full suite"',
+            '    @fix:        "Apply the minimal fix"',
+            '    @verify:     "Run the full suite"',
             "      IF (suite green)  ⚙ npm test  BREAK",
             "      IF (suite red)  CONTINUE",
-            '  done:       "Report the result"  END',
+            '  @done:       "Report the result"  END',
         ]))
 
     def test_pseudo_cycle_golden(self):
         self.assertEqual(pseudocode(parse(read("cycle.dot"))),
-                         'watch\n  LOOP\n    poll:  "Check for new work"\n    act:   "Handle it"')
+                         'watch\n  LOOP\n    @poll:  "Check for new work"\n    @act:   "Handle it"')
 
     def test_pseudo_nested_loops(self):
         self.assertEqual(pseudocode(parse(NESTED)), "\n".join([
             "g",
             "  LOOP",
-            '    a:  "A"',
+            '    @a:  "A"',
             "    LOOP",
-            '      b:  "B"',
+            '      @b:  "B"',
             "        IF (retry)  CONTINUE",
             "        IF (ok)  BREAK",
-            '    c:  "C"',
+            '    @c:  "C"',
             "      IF (more)  CONTINUE",
             "      IF (none)  BREAK",
-            '  d:  "D"  END',
+            '  @d:  "D"  END',
         ]))
         arm = ("digraph g { s [shape=point]; s -> h; h [label=H]; x [label=X]; y [label=Y, shape=doublecircle];"
                " z [label=Z, shape=doublecircle]; h -> x [label=a]; h -> y [label=b]; h -> z [label=c]; x -> h; }")
         self.assertEqual(pseudocode(parse(arm)), "\n".join([
             "g",
             "  LOOP",
-            '    h:  "H"',
+            '    @h:  "H"',
             "      IF (a)",
-            '        x:  "X"',
+            '        @x:  "X"',
             "          CONTINUE",
             "      IF (b)  BREAK",
-            "      IF (c)  GOTO z",
-            '  y:  "Y"  END',
-            '  z:  "Z"  END',
+            "      IF (c)  GOTO @z",
+            '  @y:  "Y"  END',
+            '  @z:  "Z"  END',
         ]))
 
     def test_pseudo_branch_merge(self):
@@ -101,14 +101,14 @@ class RenderTests(unittest.TestCase):
                " r [label=R, shape=doublecircle]; t -> q [label=flaky]; t -> f [label=real]; q -> r; f -> r; }")
         self.assertEqual(pseudocode(parse(dot)), "\n".join([
             "g",
-            '  t:  "Triage"',
+            '  @t:  "Triage"',
             "    IF (flaky)",
-            '      q:  "Q"',
-            "        GOTO r",
+            '      @q:  "Q"',
+            "        GOTO @r",
             "    IF (real)",
-            '      f:  "F"',
-            "        GOTO r",
-            '  r:  "R"  END',
+            '      @f:  "F"',
+            "        GOTO @r",
+            '  @r:  "R"  END',
         ]))
 
     def test_pseudo_irreducible_uses_goto(self):
@@ -116,12 +116,12 @@ class RenderTests(unittest.TestCase):
                " a -> b [label=x]; a -> c [label=y]; b -> c; c -> b; }")
         self.assertEqual(pseudocode(parse(dot)), "\n".join([
             "g",
-            '  a:  "A"',
-            "    IF (x)  GOTO b",
-            "    IF (y)  GOTO c",
-            '  c:  "C"',
-            '  b:  "B"',
-            "    GOTO c",
+            '  @a:  "A"',
+            "    IF (x)  GOTO @b",
+            "    IF (y)  GOTO @c",
+            '  @c:  "C"',
+            '  @b:  "B"',
+            "    GOTO @c",
         ]))
 
     def test_pseudo_every_state_once(self):
@@ -130,29 +130,29 @@ class RenderTests(unittest.TestCase):
         for dot, states in ((NESTED, "abcd"), (dup, "ab")):
             out = pseudocode(parse(dot))
             for state in states:
-                self.assertEqual(len(re.findall(rf"^\s+{state}:", out, re.M)), 1, state)
+                self.assertEqual(len(re.findall(rf"^\s+@{state}:", out, re.M)), 1, state)
         out = pseudocode(parse(dup))
         self.assertIn("IF (one)", out)
-        self.assertIn("IF (two)  GOTO b", out)
+        self.assertIn("IF (two)  GOTO @b", out)
 
     def test_pseudo_broken_machine_still_renders(self):
         out = pseudocode(parse("digraph g { a [label=x]; a -> a; }"))
         self.assertIn("-- unreachable --", out)
-        self.assertIn("GOTO a", out)
-        self.assertIn("GOTO ghost", pseudocode(parse("digraph g { s [shape=point]; s -> a; a [label=A]; a -> ghost; }")))
+        self.assertIn("GOTO @a", out)
+        self.assertIn("GOTO @ghost", pseudocode(parse("digraph g { s [shape=point]; s -> a; a [label=A]; a -> ghost; }")))
         out = pseudocode(parse("digraph g { s [shape=point]; s -> ghost; a [label=A]; }"))
-        self.assertRegex(out, r"-- unreachable --\n\s+a:")
-        self.assertNotRegex(out, r"(?m)^\s+ghost:")
+        self.assertRegex(out, r"-- unreachable --\n\s+@a:")
+        self.assertNotRegex(out, r"(?m)^\s+@ghost:")
         out = pseudocode(parse("digraph g { s [shape=point]; s -> a; a [label=A]; b [label=B]; c [label=C];"
                                " a -> b; a -> c [label=y]; }"))
         self.assertIn("IF (no condition)", out)
         out = pseudocode(parse('digraph m { s [shape=point]; s -> a; a [label=A]; b [label=B]; a -> b [check="test -f x"]; }'))
-        self.assertIn("IF ⚙ test -f x  GOTO b", out)
+        self.assertIn("IF ⚙ test -f x  GOTO @b", out)
         self.assertNotIn("(no condition)", out)
         out = pseudocode(parse('digraph g { s [shape=point]; s -> a; a; b [label="say \\"hi\\""]; a -> b; }'))
-        self.assertIn("\n  a:\n", out + "\n")
-        self.assertNotIn('"', next(l for l in out.splitlines() if l.strip().startswith("a:")))
-        self.assertIn('b:  "say "hi""', out)
+        self.assertIn("\n  @a:\n", out + "\n")
+        self.assertNotIn('"', next(l for l in out.splitlines() if l.strip().startswith("@a:")))
+        self.assertIn('@b:  "say "hi""', out)
         self.assertNotIn("unreachable:", out)
 
 

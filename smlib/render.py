@@ -132,7 +132,7 @@ def pseudocode(g: Graph, current: str | None = None) -> str:
     lines = [g.name]
 
     def state_line(s: str, indent: int) -> str:
-        line = f"{' ' * indent}{s + ':':<{ids + 1}}"
+        line = f"{' ' * indent}{'@' + s + ':':<{ids + 2}}"
         if g.label(s):
             line += f'  "{g.label(s)}"'
         if g.is_final(s):
@@ -188,7 +188,7 @@ def pseudocode(g: Graph, current: str | None = None) -> str:
             elif inner and hoisted[inner] and y == hoisted[inner][0]:
                 to = "BREAK"
             else:
-                to = f"GOTO {y}"
+                to = f"GOTO @{y}"
             lines.append(f"{pad}{pre}  {to}" if pre else f"{pad}{to}")
 
     if rpo:
@@ -201,7 +201,7 @@ def pseudocode(g: Graph, current: str | None = None) -> str:
             ex = g.exits(s)
             for e in ex:
                 pre = prefix(e, len(ex) > 1)
-                lines.append(f"    {pre}  GOTO {e['dst']}" if pre else f"    GOTO {e['dst']}")
+                lines.append(f"    {pre}  GOTO @{e['dst']}" if pre else f"    GOTO @{e['dst']}")
     return "\n".join(lines)
 
 
